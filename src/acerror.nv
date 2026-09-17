@@ -1,0 +1,95 @@
+// acerror.nv — every way a pattern set or a search can be refused,
+// and which of them is a fault in the caller's configuration.
+//
+// FOUR REFUSALS, AND WHY EACH IS A VALUE RATHER THAN A PANIC
+//
+// The reference implementation panics on two of these and silently
+// accepts a third.  A panic in a library is a crash in somebody
+// else's program, and the three conditions here are all things a
+// caller can be told about and can fix, so each is an arm of one
+// enum and every entry point that can meet one answers a `Result`.
+//
+// `AcOverlappingNeedsStandard` is the one that matters most.
+// Overlapping iteration is only defined under standard semantics: a
+// leftmost automaton discards the shorter candidates during
+// construction, so asking it for overlapping matches cannot be
+// answered from the tables it has.  The reference implementation
+// panics.  Here the automaton is asked, and it answers.
+
+// Why a pattern set could not be built, or a search could not be run.
+//
+// ```novo
+// use acerror
+//
+// fn main() [io]
+//     println(acerror.message(AcNoPatterns))
+// ```
+pub enum AcError
+    // A pattern in the set is the empty string, and `index` is its
+    // position in the list that was handed to `build`.  An empty
+    // pattern matches at every byte offset including the end of the
+    // haystack, so a set containing one reports a match everywhere
+    // and the caller sees a search that appears to have gone wrong
+    // rather than a set that was wrong.
+    AcEmptyPattern(index: Int)
+    // The pattern list was empty.  An automaton over no patterns
+    // never matches, which is an answer no caller wants and every
+    // caller gets by accident — a filter list read from a file that
+    // was not there, a configuration key that was misspelt.
+    AcNoPatterns
+    // Overlapping iteration was asked of an automaton built with
+    // leftmost semantics, and `kind` names the semantics it was
+    // built with.  See `acauto.supports_overlapping`, which answers
+    // the same question before the call.
+    AcOverlappingNeedsStandard(kind: Str)
+    // A replacement list is not the same length as the pattern list.
+    // The replacement for pattern `i` is `replacements[i]`, so a
+    // short list is a set of patterns that would be replaced by
+    // whatever happened to be at that index, or by nothing.
+    AcReplacementCountMismatch(patterns: Int, replacements: Int)
+
+// The refusal as a sentence, ending without a full stop, suitable for
+// a log line or an error message the caller composes.
+//
+// ```novo
+// use acerror
+//
+// fn main() [io]
+//     println(acerror.message(AcEmptyPattern(2)))
+// ```
+pub fn message(e: AcError) -> Str []
+    todo("ahocorasick-nv.acerror.message")
+
+// A short stable identifier for the refusal: `"empty-pattern"`,
+// `"no-patterns"`, `"overlapping-needs-standard"`,
+// `"replacement-count-mismatch"`.
+//
+// Stable across releases, so a caller may branch on it and a test may
+// assert it.
+//
+// ```novo
+// use acerror
+//
+// fn main() [io]
+//     println(acerror.code(AcNoPatterns))          // no-patterns
+// ```
+pub fn code(e: AcError) -> Str []
+    todo("ahocorasick-nv.acerror.code")
+
+// Whether the refusal is a fault in the pattern set rather than in
+// the call that met it.
+//
+// True for `AcEmptyPattern` and `AcNoPatterns`, which are both
+// decided when the set is built and are therefore worth reporting at
+// start-up.  False for the other two, which depend on the call.
+//
+// ```novo
+// use acerror
+//
+// fn main() [io]
+//     println("${acerror.is_pattern_fault(AcNoPatterns)}")            // true
+//     let e = AcOverlappingNeedsStandard("leftmost-first")
+//     println("${acerror.is_pattern_fault(e)}")   // false
+// ```
+pub fn is_pattern_fault(e: AcError) -> Bool []
+    todo("ahocorasick-nv.acerror.is_pattern_fault")

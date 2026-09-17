@@ -1,0 +1,91 @@
+// acstream_tests.nv — the same stream split differently gives the
+// same answers, and `finish` is not optional.
+//
+// RED ON PURPOSE.
+
+use std.test
+use acauto
+use acstream
+
+@test
+fn test_a_match_that_straddles_a_chunk_boundary_is_still_found() [io]
+    // The whole reason the module exists: `hers` split as `ushe` and
+    // `rs` is a match neither chunk contains.
+    test.case("`hers` arrives across two chunks and is reported once")
+    match acauto.build(["hers"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  =>
+            let one = acstream.feed(acstream.stream(a), "ushe")
+            test.assert(list.len(one.matches) == 0)
+            let two = acstream.feed(one.state, "rs")
+            test.assert(list.len(two.matches) == 1)
+
+    test.case("and the offset it carries is into the whole stream")
+    match acauto.build(["hers"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  =>
+            let one = acstream.feed(acstream.stream(a), "ushe")
+            let two = acstream.feed(one.state, "rs")
+            test.assert(two.matches[0].start == 2)
+
+@test
+fn test_the_split_does_not_change_the_answer() [io]
+    test.case("one byte at a time finds what one chunk finds")
+    match acauto.build(["he", "she", "his", "hers"])
+        Err(_) => test.fail("four non-empty patterns build")
+        Ok(a)  =>
+            var s = acstream.stream(a)
+            var n = 0
+            for i in 0..6
+                let f = acstream.feed(s, str.slice("ushers", i, i + 1))
+                n += list.len(f.matches)
+                s = f.state
+            let last = acstream.finish(s)
+            n += list.len(last.matches)
+            test.assert(n == 1)
+
+@test
+fn test_the_carried_state_is_bounded_by_the_longest_pattern() [io]
+    test.case("max_carry is one byte less than the longest pattern")
+    match acauto.build(["he", "hers"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  => test.assert(acstream.max_carry(a) == 3)
+
+    test.case("a fresh stream carries nothing and has consumed nothing")
+    match acauto.build(["hers"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  =>
+            let s = acstream.stream(a)
+            test.assert(acstream.carried_bytes(s) == 0)
+            test.assert(acstream.stream_offset(s) == 0)
+
+    test.case("after a chunk the offset is the number of bytes fed")
+    match acauto.build(["hers"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  =>
+            let f = acstream.feed(acstream.stream(a), "ushers")
+            test.assert(acstream.stream_offset(f.state) == 6)
+            test.assert(acstream.carried_bytes(f.state) <= acstream.max_carry(a))
+
+@test
+fn test_a_leftmost_stream_holds_its_last_candidate_until_finish() [io]
+    // `Sam` cannot be reported while `Samwise` is still possible, so
+    // a caller that never calls `finish` loses the last match of the
+    // stream.  `is_settled` is what says so.
+    test.case("standard semantics never hold anything back")
+    match acauto.build(["he"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  =>
+            let f = acstream.feed(acstream.stream(a), "ushers")
+            test.assert(acstream.is_settled(f.state))
+            test.assert(list.len(acstream.finish(f.state).matches) == 0)
+
+    test.case("leftmost-longest holds `Sam` back, and finish releases it")
+    let c = acauto.with_kind(acauto.config(), AcLeftmostLongest)
+    match acauto.build_with(["Sam", "Samwise"], c)
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            let f = acstream.feed(acstream.stream(a), "Sam")
+            test.assert(acstream.is_settled(f.state) == false)
+            test.assert(list.len(f.matches) == 0)
+            test.assert(list.len(acstream.finish(f.state).matches) == 1)

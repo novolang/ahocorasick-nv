@@ -1,0 +1,373 @@
+// acauto.nv — the automaton, built once, and the three match
+// semantics it can be built for.
+//
+// THE SEMANTICS ARE CHOSEN AT BUILD, NOT AT SEARCH
+//
+// Aho and Corasick's construction is a trie of the patterns with a
+// failure link on every node and an output set on the nodes that end
+// a pattern.  That automaton reports every occurrence of every
+// pattern, which is what this package calls STANDARD semantics.
+//
+// The two leftmost semantics are not a filter over those reports.
+// They need the automaton itself to be built differently, because a
+// leftmost automaton has to know, at a node, which of the candidates
+// still alive can win — and the losing candidates are dropped during
+// construction rather than discovered during the search.  So the
+// semantics is a field of `AcConfig`, read once by `build_with`, and
+// no search function takes one.
+//
+// The consequence a caller meets is `supports_overlapping`.  A
+// leftmost automaton cannot answer an overlapping query at all: the
+// shorter candidates it would have to report are not in its tables.
+// The reference implementation panics on that call.  Here the
+// automaton answers the question before the call, and
+// `acfind.find_overlapping` answers `AcOverlappingNeedsStandard`
+// rather than ending the program.
+//
+// ASCII CASE-INSENSITIVITY IS A BUILD OPTION, AND IS ASCII ONLY
+//
+// Folding changes the transitions, so it belongs in the construction
+// and not in the search.  It is ASCII only, deliberately: Unicode
+// case folding is not length-preserving — `ß` folds to `ss` — so a
+// Unicode-folding automaton could not report byte ranges into the
+// caller's own haystack, which is the whole shape of `AcMatch`.  A
+// caller that wants Unicode folding folds the haystack and the
+// patterns itself, with unicode-nv, and accepts that the offsets are
+// into the folded text.  `case_fold_notes` names the patterns for
+// which the ASCII option does nothing.
+
+use acerror
+
+// Which occurrences a search reports.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     println(acauto.kind_name(AcLeftmostFirst))   // leftmost-first
+// ```
+pub enum AcMatchKind
+    // Every occurrence of every pattern, in the order the automaton
+    // reaches them.  The only semantics under which overlapping
+    // iteration is defined.  Over the patterns `he`, `she`, `his` and
+    // `hers` and the haystack `ushers`, the reports are `she` at 1,
+    // `he` at 2 and `hers` at 2.
+    AcStandard
+    // At each position the pattern that appears EARLIEST IN THE
+    // PATTERN LIST wins, and a match consumes the bytes it covers.
+    // This is the semantics of an alternation in a backtracking
+    // regular expression, and it is the one a caller who wrote the
+    // list in priority order wants.  Over `Sam` and `Samwise` in that
+    // order, `Samwise` reports `Sam`.
+    AcLeftmostFirst
+    // At each position the LONGEST pattern wins, whatever order the
+    // list is in.  This is POSIX alternation semantics.  Over `Sam`
+    // and `Samwise` in either order, `Samwise` reports `Samwise`.
+    AcLeftmostLongest
+
+// How an automaton is to be built.
+//
+// A value rather than a pile of arguments, so a program that builds
+// several sets the same way states the shape once and a reviewer can
+// read it.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     let c = acauto.with_kind(acauto.config(), AcLeftmostLongest)
+//     println(acauto.kind_name(c.kind))       // leftmost-longest
+// ```
+pub struct AcConfig
+    // Which occurrences a search over the built automaton reports.
+    kind: AcMatchKind
+    // Whether `A`..`Z` and `a`..`z` are folded together.  No other
+    // byte is affected; see the module comment.
+    ascii_case_insensitive: Bool
+
+// A multi-pattern automaton, built once and searched many times.
+//
+// The fields are the built tables.  They are public because a value
+// with no readable fields cannot be tested, and a caller reads them
+// through the functions below rather than directly.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     match acauto.build(["he", "she", "his", "hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acauto.pattern_count(a)}")     // 4
+// ```
+pub struct AcAutomaton
+    // The patterns, in the order they were given.  An `AcMatch`
+    // carries an index into this list.
+    patterns: [Str]
+    // The semantics this automaton was built for.
+    kind: AcMatchKind
+    // Whether ASCII letters were folded during construction.
+    ascii_case_insensitive: Bool
+    // The transition table, 256 entries per state, flattened: the
+    // state reached from state `s` on byte `b` is
+    // `transitions[s * 256 + b]`.
+    transitions: [Int]
+    // The failure link of each state — where the automaton continues
+    // when no transition matches.
+    fail: [Int]
+    // The index into `match_pattern` at which state `s`'s output set
+    // begins.  The set ends where state `s + 1`'s begins.
+    match_start: [Int]
+    // The pattern indices of every output set, concatenated.
+    match_pattern: [Int]
+
+// The default configuration: standard semantics, case-sensitive.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     println("${acauto.config().ascii_case_insensitive}")   // false
+// ```
+pub fn config() -> AcConfig []
+    todo("ahocorasick-nv.acauto.config")
+
+// The same configuration with a different match semantics.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     let c = acauto.with_kind(acauto.config(), AcLeftmostFirst)
+//     println(acauto.kind_name(c.kind))       // leftmost-first
+// ```
+pub fn with_kind(c: AcConfig, kind: AcMatchKind) -> AcConfig []
+    todo("ahocorasick-nv.acauto.with_kind")
+
+// The same configuration with ASCII case folding turned on or off.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     let c = acauto.with_ascii_case_insensitive(acauto.config(), true)
+//     println("${c.ascii_case_insensitive}")   // true
+// ```
+pub fn with_ascii_case_insensitive(c: AcConfig, on: Bool) -> AcConfig []
+    todo("ahocorasick-nv.acauto.with_ascii_case_insensitive")
+
+// Build an automaton over a pattern list, with standard semantics and
+// no case folding.
+//
+// Answers `AcNoPatterns` for an empty list and `AcEmptyPattern` for a
+// list containing the empty string.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     match acauto.build(["he", "she", "his", "hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acauto.state_count(a)}")
+// ```
+pub fn build(patterns: [Str]) -> Result<AcAutomaton, acerror.AcError> []
+    todo("ahocorasick-nv.acauto.build")
+
+// Build an automaton over a pattern list, with a configuration.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     let c = acauto.with_kind(acauto.config(), AcLeftmostLongest)
+//     match acauto.build_with(["Sam", "Samwise"], c)
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println(acauto.kind_name(acauto.kind_of(a)))
+// ```
+pub fn build_with(patterns: [Str], c: AcConfig) -> Result<AcAutomaton, acerror.AcError> []
+    todo("ahocorasick-nv.acauto.build_with")
+
+// The semantics the automaton was built for.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     match acauto.build(["a"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println(acauto.kind_name(acauto.kind_of(a)))   // standard
+// ```
+pub fn kind_of(a: AcAutomaton) -> AcMatchKind []
+    todo("ahocorasick-nv.acauto.kind_of")
+
+// The semantics as a stable name: `"standard"`, `"leftmost-first"`,
+// `"leftmost-longest"`.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     println(acauto.kind_name(AcStandard))    // standard
+// ```
+pub fn kind_name(k: AcMatchKind) -> Str []
+    todo("ahocorasick-nv.acauto.kind_name")
+
+// The semantics a name denotes, or `None`.
+//
+// The names are the ones `kind_name` prints, so a configuration file
+// or a command-line flag round-trips through the pair.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     match acauto.kind_named("leftmost-longest")
+//         Some(_) => println("known")
+//         None    => println("not a semantics this package has")
+// ```
+pub fn kind_named(name: Str) -> ?AcMatchKind []
+    todo("ahocorasick-nv.acauto.kind_named")
+
+// How many patterns the automaton holds.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     match acauto.build(["he", "she"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acauto.pattern_count(a)}")    // 2
+// ```
+pub fn pattern_count(a: AcAutomaton) -> Int []
+    todo("ahocorasick-nv.acauto.pattern_count")
+
+// The pattern at an index, or `None` when the index is out of range.
+//
+// This is how a caller turns an `AcMatch.pattern` back into the
+// pattern that produced it.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     match acauto.build(["he", "she"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             match acauto.pattern_at(a, 1)
+//                 Some(p) => println(p)       // she
+//                 None    => println("no such pattern")
+// ```
+pub fn pattern_at(a: AcAutomaton, index: Int) -> ?Str []
+    todo("ahocorasick-nv.acauto.pattern_at")
+
+// The length in bytes of the shortest pattern in the set.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     match acauto.build(["he", "hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acauto.min_pattern_len(a)}")   // 2
+// ```
+pub fn min_pattern_len(a: AcAutomaton) -> Int []
+    todo("ahocorasick-nv.acauto.min_pattern_len")
+
+// The length in bytes of the longest pattern in the set.
+//
+// A streaming caller needs this: it is what bounds the bytes the
+// stream state has to carry across a chunk boundary.  See
+// `acstream.max_carry`.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     match acauto.build(["he", "hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acauto.max_pattern_len(a)}")   // 4
+// ```
+pub fn max_pattern_len(a: AcAutomaton) -> Int []
+    todo("ahocorasick-nv.acauto.max_pattern_len")
+
+// Whether the automaton folds ASCII letters.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     let c = acauto.with_ascii_case_insensitive(acauto.config(), true)
+//     match acauto.build_with(["he"], c)
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acauto.is_ascii_case_insensitive(a)}")   // true
+// ```
+pub fn is_ascii_case_insensitive(a: AcAutomaton) -> Bool []
+    todo("ahocorasick-nv.acauto.is_ascii_case_insensitive")
+
+// Whether `acfind.find_overlapping` can be called on this automaton.
+//
+// True only for `AcStandard`.  Asking a leftmost automaton for
+// overlapping matches is `AcOverlappingNeedsStandard`, and this is
+// the question that can be asked first.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     let c = acauto.with_kind(acauto.config(), AcLeftmostFirst)
+//     match acauto.build_with(["he"], c)
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acauto.supports_overlapping(a)}")   // false
+// ```
+pub fn supports_overlapping(a: AcAutomaton) -> Bool []
+    todo("ahocorasick-nv.acauto.supports_overlapping")
+
+// How many states the automaton has.
+//
+// One more than the number of distinct pattern prefixes, counting the
+// root.  It is here because it is the number a caller sizing a
+// deployment wants, beside `memory_bytes`.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     match acauto.build(["a", "ab"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acauto.state_count(a)}")    // 3
+// ```
+pub fn state_count(a: AcAutomaton) -> Int []
+    todo("ahocorasick-nv.acauto.state_count")
+
+// How many bytes of the automaton's tables are held.
+//
+// The dense transition table is 256 entries per state, so this number
+// grows quickly with the number of distinct prefixes and a caller
+// building an automaton from user-supplied patterns should look at it.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     match acauto.build(["he", "she", "his", "hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acauto.memory_bytes(a)}")
+// ```
+pub fn memory_bytes(a: AcAutomaton) -> Int []
+    todo("ahocorasick-nv.acauto.memory_bytes")
+
+// The indices of the patterns for which ASCII case folding does
+// nothing, because they contain no ASCII letter at all.
+//
+// A caller who turned case-insensitivity on and handed in a list of
+// Greek or Cyrillic words got exact matching and no warning.  This is
+// the warning, and it is a separate call rather than a refusal
+// because a mixed list is a perfectly reasonable thing to build.
+//
+// ```novo
+// use acauto
+//
+// fn main() [io]
+//     println("${list.len(acauto.case_fold_notes(["he", "123"]))}")   // 1
+// ```
+pub fn case_fold_notes(patterns: [Str]) -> [Int] []
+    todo("ahocorasick-nv.acauto.case_fold_notes")

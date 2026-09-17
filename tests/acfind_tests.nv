@@ -1,0 +1,115 @@
+// acfind_tests.nv — the 1975 paper's own example, the
+// overlapping/non-overlapping split, and the cursor.
+//
+// RED ON PURPOSE.  The vector is figure 1 of Aho and Corasick,
+// "Efficient string matching: an aid to bibliographic search",
+// Communications of the ACM 18(6), 1975: the keywords `he`, `she`,
+// `his` and `hers` over the text `ushers`.
+
+use std.test
+use acauto
+use acerror
+use acfind
+use acmatch
+
+@test
+fn test_the_paper_example_overlapping() [io]
+    test.case("`ushers` contains she at 1, he at 2 and hers at 2")
+    match acauto.build(["he", "she", "his", "hers"])
+        Err(_) => test.fail("four non-empty patterns build")
+        Ok(a)  =>
+            match acfind.find_overlapping(a, "ushers")
+                Err(_) => test.fail("a standard automaton answers overlapping")
+                Ok(ms) =>
+                    test.assert(list.len(ms) == 3)
+                    test.assert(acmatch.matched_text("ushers", ms[0]) == "she")
+                    test.assert(ms[0].start == 1)
+                    test.assert(acmatch.matched_text("ushers", ms[1]) == "he")
+                    test.assert(ms[1].start == 2)
+                    test.assert(acmatch.matched_text("ushers", ms[2]) == "hers")
+
+@test
+fn test_the_paper_example_non_overlapping() [io]
+    // The same automaton and the same text: a match consumes the
+    // bytes it covers, so `he` and `hers` are both inside `she` and
+    // neither is reported.  This is the difference a caller most
+    // often does not expect.
+    test.case("the same text reports one non-overlapping match")
+    match acauto.build(["he", "she", "his", "hers"])
+        Err(_) => test.fail("four non-empty patterns build")
+        Ok(a)  =>
+            let ms = acfind.find_all(a, "ushers")
+            test.assert(list.len(ms) == 1)
+            test.assert(acmatch.matched_text("ushers", ms[0]) == "she")
+            test.assert(acfind.count(a, "ushers") == 1)
+
+@test
+fn test_overlapping_on_a_leftmost_automaton_is_refused_not_a_panic() [io]
+    // The load-bearing refusal: a leftmost automaton drops the
+    // shorter candidates during construction, so it cannot answer
+    // this from the tables it has.  The reference implementation
+    // panics; here the caller gets the reason and the semantics it
+    // was built with.
+    test.case("the refusal names the semantics")
+    let c = acauto.with_kind(acauto.config(), AcLeftmostFirst)
+    match acauto.build_with(["he", "she"], c)
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            match acfind.find_overlapping(a, "ushers")
+                Ok(_)  => test.fail("a leftmost automaton cannot answer this")
+                Err(e) =>
+                    test.assert(acerror.code(e) == "overlapping-needs-standard")
+                    test.assert(acerror.is_pattern_fault(e) == false)
+
+@test
+fn test_a_search_from_an_offset_reports_absolute_offsets() [io]
+    test.case("find_at skips what is behind it")
+    match acauto.build(["he", "she"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            match acfind.find_at(a, "ushers", 2)
+                None    => test.fail("`he` is at offset 2")
+                Some(m) => test.assert(m.start == 2)
+
+    test.case("an offset past the end is None, not a failure")
+    match acauto.build(["he"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  => test.assert_none(acfind.find_at(a, "ushers", 99))
+
+@test
+fn test_is_match_answers_without_building_a_list() [io]
+    test.case("present")
+    match acauto.build(["he", "she"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  => test.assert(acfind.is_match(a, "ushers"))
+
+    test.case("absent")
+    match acauto.build(["zz"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  => test.assert(acfind.is_match(a, "ushers") == false)
+
+@test
+fn test_the_cursor_walks_the_same_matches_as_the_list() [io]
+    // `step` is the iteration `find_all` builds a list from, so a
+    // caller that stops early pays for nothing it did not read.
+    test.case("stepping `usher she` finds two matches and then stops")
+    match acauto.build(["he", "she"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            var c = acfind.cursor(a, "usher she")
+            test.assert(acfind.cursor_offset(c) == 0)
+            var n = 0
+            loop
+                let s = acfind.step(c)
+                match s.found
+                    None    =>
+                        break
+                    Some(_) =>
+                        n += 1
+                c = s.next
+            test.assert(n == list.len(acfind.find_all(a, "usher she")))
+
+    test.case("a cursor can start part-way in")
+    match acauto.build(["he"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  => test.assert(acfind.cursor_offset(acfind.cursor_at(a, "ushers", 4)) == 4)

@@ -1,0 +1,118 @@
+// acmatch.nv — a match is a pattern index and a byte range, never a
+// copied string.
+//
+// WHY THE MATCH DOES NOT CARRY ITS TEXT
+//
+// A multi-pattern scan over a large haystack reports a great many
+// matches, and the caller of a scan usually wants to do one of three
+// things with each: count it, replace it, or record where it was.
+// None of those needs a copy of the matched bytes, and a match that
+// carried one would allocate once per hit.  `matched_text` is the
+// fourth thing, spelled out, so the copy happens where a reader can
+// see it.
+//
+// The range is `[start, end)` in BYTES, which is what the automaton
+// works in.  A caller that wants character offsets converts them; a
+// caller that wants to slice the haystack does not have to.
+
+// One reported match: which pattern, and where in the haystack.
+//
+// ```novo
+// use acmatch
+//
+// fn main() [io]
+//     let m = acmatch.at(0, 4, 8)
+//     println("${acmatch.len(m)}")            // 4
+// ```
+pub struct AcMatch
+    // The pattern's index in the list that was handed to
+    // `acauto.build`.  Indices are the caller's own, so a caller that
+    // built the set from a table can look the row up directly.
+    pattern: Int
+    // The byte offset of the first byte of the match, inclusive.
+    start: Int
+    // The byte offset one past the last byte of the match, exclusive.
+    end: Int
+
+// A match value.
+//
+// The constructor exists because a struct declared in one module
+// cannot be written as a literal in another, and because a test wants
+// to state the match it expects.
+//
+// ```novo
+// use acmatch
+//
+// fn main() [io]
+//     let m = acmatch.at(1, 0, 3)
+//     println("${m.pattern} ${m.start} ${m.end}")   // 1 0 3
+// ```
+pub fn at(pattern: Int, start: Int, end: Int) -> AcMatch []
+    todo("ahocorasick-nv.acmatch.at")
+
+// The length of the match in bytes: `end - start`.
+//
+// ```novo
+// use acmatch
+//
+// fn main() [io]
+//     println("${acmatch.len(acmatch.at(0, 2, 7))}")   // 5
+// ```
+pub fn len(m: AcMatch) -> Int []
+    todo("ahocorasick-nv.acmatch.len")
+
+// The matched bytes, copied out of the haystack the match came from.
+//
+// The haystack is an argument because the match does not hold one.
+// Handing a different haystack answers the bytes at the same offsets,
+// which is the caller's mistake and not one this package can detect.
+//
+// ```novo
+// use acauto
+// use acfind
+// use acmatch
+//
+// fn main() [io]
+//     match acauto.build(["she", "he", "hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             match acfind.find(a, "ushers")
+//                 None    => println("no match")
+//                 Some(m) => println(acmatch.matched_text("ushers", m))
+// ```
+pub fn matched_text(haystack: Str, m: AcMatch) -> Str []
+    todo("ahocorasick-nv.acmatch.matched_text")
+
+// Whether two matches share at least one byte.
+//
+// A standard-semantics scan reports overlapping matches, and a caller
+// rendering highlights has to decide what to do about them.  This is
+// the predicate that question is asked with.
+//
+// ```novo
+// use acmatch
+//
+// fn main() [io]
+//     println("${acmatch.overlaps(acmatch.at(0, 0, 4), acmatch.at(1, 2, 6))}")   // true
+//     println("${acmatch.overlaps(acmatch.at(0, 0, 2), acmatch.at(1, 2, 6))}")   // false
+// ```
+pub fn overlaps(a: AcMatch, b: AcMatch) -> Bool []
+    todo("ahocorasick-nv.acmatch.overlaps")
+
+// Order two matches: negative when `a` comes first, zero when they are
+// the same match, positive when `b` comes first.
+//
+// The order is by `start`, then by `end`, then by `pattern`, so it is
+// total and two scans of the same haystack sort identically.  A
+// partial order would leave the report order of an overlapping scan up
+// to the automaton's internal state, which is not something a caller
+// can test against.
+//
+// ```novo
+// use acmatch
+//
+// fn main() [io]
+//     println("${acmatch.compare(acmatch.at(0, 1, 4), acmatch.at(1, 1, 6))}")
+// ```
+pub fn compare(a: AcMatch, b: AcMatch) -> Int []
+    todo("ahocorasick-nv.acmatch.compare")

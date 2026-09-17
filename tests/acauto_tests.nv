@@ -1,0 +1,128 @@
+// acauto_tests.nv — the three match semantics, and what the build
+// refuses.
+//
+// RED ON PURPOSE: every assertion reaches `not implemented:
+// ahocorasick-nv.<module>.<fn>`.  The vectors are the ones the
+// reference implementations document their own semantics with.
+
+use std.test
+use acauto
+use acerror
+use acfind
+use acmatch
+
+@test
+fn test_leftmost_first_takes_the_pattern_listed_first() [io]
+    // The `aho-corasick` crate's own illustration of the difference,
+    // and the reason the pattern ORDER is part of the pattern set.
+    test.case("`Sam` before `Samwise` reports `Sam`")
+    let c = acauto.with_kind(acauto.config(), AcLeftmostFirst)
+    match acauto.build_with(["Sam", "Samwise"], c)
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            match acfind.find(a, "Samwise")
+                None    => test.fail("Samwise contains Sam")
+                Some(m) => test.assert(acmatch.matched_text("Samwise", m) == "Sam")
+
+    test.case("`Samwise` before `Sam` reports `Samwise`")
+    match acauto.build_with(["Samwise", "Sam"], c)
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            match acfind.find(a, "Samwise")
+                None    => test.fail("Samwise contains Samwise")
+                Some(m) => test.assert(acmatch.matched_text("Samwise", m) == "Samwise")
+
+@test
+fn test_leftmost_longest_ignores_the_order() [io]
+    // POSIX alternation semantics: the longest wins whichever way the
+    // list was written, which is what makes this the safe choice for
+    // a set a user typed.
+    let c = acauto.with_kind(acauto.config(), AcLeftmostLongest)
+
+    test.case("`Sam` before `Samwise` still reports `Samwise`")
+    match acauto.build_with(["Sam", "Samwise"], c)
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            match acfind.find(a, "Samwise")
+                None    => test.fail("Samwise contains Samwise")
+                Some(m) => test.assert(acmatch.len(m) == 7)
+
+    test.case("and the semantics reads back off the automaton")
+    match acauto.build_with(["Sam", "Samwise"], c)
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  => test.assert(acauto.kind_name(acauto.kind_of(a)) == "leftmost-longest")
+
+@test
+fn test_the_build_refuses_a_set_no_search_could_use() [io]
+    test.case("an empty list is AcNoPatterns, not an automaton that never matches")
+    match acauto.build([])
+        Ok(_)  => test.fail("an automaton over no patterns is not an answer")
+        Err(e) => test.assert(acerror.code(e) == "no-patterns")
+
+    test.case("an empty pattern is refused, and its index is named")
+    match acauto.build(["he", "", "she"])
+        Ok(_)  => test.fail("an empty pattern matches at every offset")
+        Err(e) => test.assert(acerror.code(e) == "empty-pattern")
+
+@test
+fn test_the_configuration_is_a_value_read_once_at_build() [io]
+    test.case("the default is standard and case-sensitive")
+    let d = acauto.config()
+    test.assert(acauto.kind_name(d.kind) == "standard")
+    test.assert(d.ascii_case_insensitive == false)
+
+    test.case("case folding is a build option and reads back")
+    let c = acauto.with_ascii_case_insensitive(acauto.config(), true)
+    match acauto.build_with(["he"], c)
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  => test.assert(acauto.is_ascii_case_insensitive(a))
+
+    test.case("and a folded automaton finds the other case")
+    match acauto.build_with(["he"], c)
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  => test.assert(acfind.is_match(a, "USHERS"))
+
+@test
+fn test_only_a_standard_automaton_supports_overlapping() [io]
+    // The predicate is published so the question can be asked before
+    // the call; the reference implementation answers it by panicking.
+    test.case("standard supports it")
+    match acauto.build(["he", "she"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  => test.assert(acauto.supports_overlapping(a))
+
+    test.case("leftmost-first does not")
+    let c = acauto.with_kind(acauto.config(), AcLeftmostFirst)
+    match acauto.build_with(["he", "she"], c)
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  => test.assert(acauto.supports_overlapping(a) == false)
+
+@test
+fn test_the_set_can_be_asked_about_itself() [io]
+    test.case("the patterns read back in the order they were given")
+    match acauto.build(["he", "she", "his", "hers"])
+        Err(_) => test.fail("four non-empty patterns build")
+        Ok(a)  =>
+            test.assert(acauto.pattern_count(a) == 4)
+            match acauto.pattern_at(a, 3)
+                Some(p) => test.assert(p == "hers")
+                None    => test.fail("index 3 of four patterns exists")
+
+    test.case("an index past the end is None, not a crash")
+    match acauto.build(["he"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  => test.assert_none(acauto.pattern_at(a, 7))
+
+    test.case("the shortest and the longest pattern are both known")
+    match acauto.build(["he", "hers"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            test.assert(acauto.min_pattern_len(a) == 2)
+            test.assert(acauto.max_pattern_len(a) == 4)
+
+    test.case("the size of the tables is a number a caller can read")
+    match acauto.build(["a", "ab"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            test.assert(acauto.state_count(a) == 3)
+            test.assert(acauto.memory_bytes(a) > 0)

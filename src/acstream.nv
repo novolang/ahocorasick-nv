@@ -1,0 +1,212 @@
+// acstream.nv — searching a haystack that arrives in pieces.
+//
+// THE STATE IS A VALUE, AND IT CARRIES THREE THINGS
+//
+// A stream search cannot be a fold over `acfind.find_all` applied to
+// each chunk, because a pattern may straddle a boundary: `hers` split
+// as `he` and `rs` is a match that neither chunk contains.  So the
+// state carries the automaton node the last chunk ended in, the
+// absolute byte offset the stream has reached, and a tail of the
+// bytes a match still under way may need.
+//
+// The tail is bounded by `max_carry`, one byte less than the longest
+// pattern, so a caller can size a deployment: the memory a stream
+// holds does not grow with the length of the stream.
+//
+// EVERY OFFSET IS ABSOLUTE
+//
+// The matches `feed` reports carry offsets into the WHOLE stream, not
+// into the chunk that completed them.  A caller that had to add a
+// running total back would get it wrong exactly once, at the match
+// that straddles, which is the case the whole module exists for.
+//
+// A REPORT IS FINAL, AND `finish` IS NOT OPTIONAL
+//
+// Under standard semantics a match is final the moment it is seen.
+// Under either leftmost semantics it is not: `Sam` at offset 4 may
+// still lose to `Samwise`, and whether it does depends on bytes that
+// have not arrived.  So `feed` reports only what no later byte can
+// change, `is_settled` says whether anything is being held back, and
+// `finish` releases the last candidate at the end of the stream.  A
+// caller that forgets `finish` loses the last match of the stream,
+// silently — which is why `is_settled` is published rather than left
+// as an implementation detail.
+
+use acauto
+use acmatch
+
+// A stream search in progress.
+//
+// ```novo
+// use acauto
+// use acstream
+//
+// fn main() [io]
+//     match acauto.build(["hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acstream.stream_offset(acstream.stream(a))}")   // 0
+// ```
+pub struct AcStreamState
+    // The automaton being searched with.
+    automaton: acauto.AcAutomaton
+    // The automaton state the last chunk ended in.
+    node: Int
+    // How many bytes of the stream have been consumed.  The next byte
+    // to arrive is at this offset.
+    consumed: Int
+    // The bytes of the stream a match still under way may need, at
+    // most `max_carry` of them.
+    tail: Str
+    // A leftmost candidate that a later byte could still beat, or
+    // `None`.  Always `None` under standard semantics.
+    pending: ?acmatch.AcMatch
+
+// What one `feed` or `finish` produced.
+//
+// ```novo
+// use acauto
+// use acstream
+//
+// fn main() [io]
+//     match acauto.build(["he"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             let f = acstream.feed(acstream.stream(a), "ushers")
+//             println("${list.len(f.matches)}")
+// ```
+pub struct AcFeed
+    // The state to hand to the next `feed`, or to `finish`.
+    state: AcStreamState
+    // The matches that became final during this call, in order, with
+    // offsets into the whole stream.
+    matches: [acmatch.AcMatch]
+
+// A stream search over an automaton, at offset zero.
+//
+// ```novo
+// use acauto
+// use acstream
+//
+// fn main() [io]
+//     match acauto.build(["hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acstream.carried_bytes(acstream.stream(a))}")   // 0
+// ```
+pub fn stream(a: acauto.AcAutomaton) -> AcStreamState []
+    todo("ahocorasick-nv.acstream.stream")
+
+// Consume one chunk, and report the matches it made final.
+//
+// A chunk may be any length, including empty.  The same stream split
+// differently produces the same matches at the same offsets, which is
+// the property the suite asserts by feeding `ushers` one byte at a
+// time.
+//
+// ```novo
+// use acauto
+// use acstream
+//
+// fn main() [io]
+//     match acauto.build(["hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             let one = acstream.feed(acstream.stream(a), "ushe")
+//             let two = acstream.feed(one.state, "rs")
+//             println("${list.len(two.matches)}")     // 1
+// ```
+pub fn feed(s: AcStreamState, chunk: Str) -> AcFeed []
+    todo("ahocorasick-nv.acstream.feed")
+
+// End the stream, and report whatever was being held back.
+//
+// Under standard semantics this always answers an empty list, because
+// nothing is ever held back.  Under either leftmost semantics it is
+// the call that releases the last candidate, and a caller that omits
+// it loses the last match of the stream.
+//
+// ```novo
+// use acauto
+// use acstream
+//
+// fn main() [io]
+//     let c = acauto.with_kind(acauto.config(), AcLeftmostLongest)
+//     match acauto.build_with(["Sam", "Samwise"], c)
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             let f = acstream.feed(acstream.stream(a), "Samwise")
+//             println("${list.len(acstream.finish(f.state).matches)}")   // 1
+// ```
+pub fn finish(s: AcStreamState) -> AcFeed []
+    todo("ahocorasick-nv.acstream.finish")
+
+// How many bytes of the stream have been consumed.
+//
+// The offset the next byte will have, and the number every reported
+// offset is measured against.
+//
+// ```novo
+// use acauto
+// use acstream
+//
+// fn main() [io]
+//     match acauto.build(["he"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             let f = acstream.feed(acstream.stream(a), "ushers")
+//             println("${acstream.stream_offset(f.state)}")    // 6
+// ```
+pub fn stream_offset(s: AcStreamState) -> Int []
+    todo("ahocorasick-nv.acstream.stream_offset")
+
+// How many bytes the state is holding on to.
+//
+// Never more than `max_carry`, whatever the length of the stream.
+//
+// ```novo
+// use acauto
+// use acstream
+//
+// fn main() [io]
+//     match acauto.build(["hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             let f = acstream.feed(acstream.stream(a), "ushe")
+//             println("${acstream.carried_bytes(f.state)}")
+// ```
+pub fn carried_bytes(s: AcStreamState) -> Int []
+    todo("ahocorasick-nv.acstream.carried_bytes")
+
+// The most bytes a stream over this automaton will ever carry: one
+// less than the longest pattern.
+//
+// A caller sizing a fixed buffer, or deciding whether a stream search
+// fits on a device, asks this before starting.
+//
+// ```novo
+// use acauto
+// use acstream
+//
+// fn main() [io]
+//     match acauto.build(["he", "hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acstream.max_carry(a)}")    // 3
+// ```
+pub fn max_carry(a: acauto.AcAutomaton) -> Int []
+    todo("ahocorasick-nv.acstream.max_carry")
+
+// Whether `finish` would report nothing.
+//
+// True when no candidate is being held back, so a caller that wants
+// to stop reading early knows whether it has already seen everything.
+//
+// ```novo
+// use acauto
+// use acstream
+//
+// fn main() [io]
+//     match acauto.build(["he"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acstream.is_settled(acstream.stream(a))}")   // true
+// ```
+pub fn is_settled(s: AcStreamState) -> Bool []
+    todo("ahocorasick-nv.acstream.is_settled")

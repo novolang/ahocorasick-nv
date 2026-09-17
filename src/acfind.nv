@@ -1,0 +1,269 @@
+// acfind.nv — searching one haystack the caller already holds whole.
+//
+// THREE SHAPES, AND WHO TAKES WHICH
+//
+// `is_match` answers a question and stops at the first hit, which is
+// what a filter wants and is the cheapest call here.  `find_all`
+// builds the list, which is what a caller who is about to iterate it
+// twice wants.  `cursor` and `step` walk the haystack one match at a
+// time with no list at all, which is what a caller that is going to
+// stop early wants, and what a caller rendering into a fixed buffer
+// needs.
+//
+// All three report the same matches in the same order, because all
+// three ask the same automaton.  The order is by start offset, and
+// within a start offset by end offset — `acmatch.compare`'s order, and
+// it is total, so a test may assert the whole list.
+//
+// OVERLAPPING IS A SEPARATE FUNCTION AND ANSWERS A RESULT
+//
+// `find_all` never reports two matches that share a byte: a match
+// consumes the bytes it covers and the scan resumes after them.
+// `find_overlapping` reports every occurrence of every pattern, and it
+// can only be answered by a standard automaton — see acauto's module
+// comment.  It is spelled as a `Result` rather than as a panic
+// because "I built this set leftmost-first six months ago" is a fact
+// a running program can recover from and a crash is not.
+
+use acauto
+use acerror
+use acmatch
+
+// A position in a haystack that a search has reached.
+//
+// A value, so `step` is a pure function from one cursor to the next
+// and a caller may keep, copy or discard one freely.
+//
+// ```novo
+// use acauto
+// use acfind
+//
+// fn main() [io]
+//     match acauto.build(["he", "she"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acfind.cursor_offset(acfind.cursor(a, "ushers"))}")
+// ```
+pub struct AcCursor
+    // The automaton being searched with.
+    automaton: acauto.AcAutomaton
+    // The haystack being searched.
+    haystack: Str
+    // The byte offset the next `step` starts from.
+    at: Int
+
+// What one `step` produced: the next cursor, and the match if there
+// was one.
+//
+// ```novo
+// use acauto
+// use acfind
+//
+// fn main() [io]
+//     match acauto.build(["he", "she"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             let s = acfind.step(acfind.cursor(a, "ushers"))
+//             match s.found
+//                 Some(m) => println("${m.start}")
+//                 None    => println("the haystack is exhausted")
+// ```
+pub struct AcStep
+    // The cursor to hand to the next `step`.
+    next: AcCursor
+    // The match, or `None` when the haystack is exhausted.  A `None`
+    // is final: stepping the returned cursor answers `None` again.
+    found: ?acmatch.AcMatch
+
+// Whether the haystack contains any pattern in the set.
+//
+// Stops at the first hit, so it is the call to make when the answer
+// is all that is wanted.  The match semantics do not change the
+// answer, only which match would have been reported.
+//
+// ```novo
+// use acauto
+// use acfind
+//
+// fn main() [io]
+//     match acauto.build(["he", "she"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acfind.is_match(a, "ushers")}")    // true
+// ```
+pub fn is_match(a: acauto.AcAutomaton, haystack: Str) -> Bool []
+    todo("ahocorasick-nv.acfind.is_match")
+
+// The first match in the haystack, or `None`.
+//
+// Which match is first depends on the semantics the automaton was
+// built for.  Over `Sam` and `Samwise` in that order and the haystack
+// `Samwise`: standard and leftmost-first both report `Sam`;
+// leftmost-longest reports `Samwise`.
+//
+// ```novo
+// use acauto
+// use acfind
+//
+// fn main() [io]
+//     match acauto.build(["he", "she", "his", "hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             match acfind.find(a, "ushers")
+//                 Some(m) => println("${m.pattern} at ${m.start}")
+//                 None    => println("no match")
+// ```
+pub fn find(a: acauto.AcAutomaton, haystack: Str) -> ?acmatch.AcMatch []
+    todo("ahocorasick-nv.acfind.find")
+
+// The first match at or after a byte offset, or `None`.
+//
+// The offsets in the answer are into the whole haystack, not relative
+// to `at`, so a caller resuming a scan does not have to add anything
+// back.  An `at` past the end of the haystack answers `None` rather
+// than failing.
+//
+// ```novo
+// use acauto
+// use acfind
+//
+// fn main() [io]
+//     match acauto.build(["he", "she"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             match acfind.find_at(a, "ushers", 2)
+//                 Some(m) => println("${m.start}")     // 2
+//                 None    => println("no match")
+// ```
+pub fn find_at(a: acauto.AcAutomaton, haystack: Str, at: Int) -> ?acmatch.AcMatch []
+    todo("ahocorasick-nv.acfind.find_at")
+
+// Every non-overlapping match, in order.
+//
+// A match consumes the bytes it covers, so the next search resumes at
+// its end.  Over the patterns `he`, `she`, `his` and `hers` and the
+// haystack `ushers` with standard semantics, that is `she` at 1 and
+// nothing else: `he` at 2 and `hers` at 2 both overlap it.
+//
+// ```novo
+// use acauto
+// use acfind
+//
+// fn main() [io]
+//     match acauto.build(["he", "she", "his", "hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${list.len(acfind.find_all(a, "ushers"))}")   // 1
+// ```
+pub fn find_all(a: acauto.AcAutomaton, haystack: Str) -> [acmatch.AcMatch] []
+    todo("ahocorasick-nv.acfind.find_all")
+
+// How many non-overlapping matches the haystack holds.
+//
+// The length of `find_all`'s answer, without building the list.
+//
+// ```novo
+// use acauto
+// use acfind
+//
+// fn main() [io]
+//     match acauto.build(["he", "she"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acfind.count(a, "ushers")}")
+// ```
+pub fn count(a: acauto.AcAutomaton, haystack: Str) -> Int []
+    todo("ahocorasick-nv.acfind.count")
+
+// Every occurrence of every pattern, including matches that share
+// bytes.
+//
+// Only a standard automaton can answer this; a leftmost one is
+// `AcOverlappingNeedsStandard`, naming the semantics it was built
+// with.  `acauto.supports_overlapping` answers the same question
+// before the call.
+//
+// Over `he`, `she`, `his` and `hers` and the haystack `ushers`, the
+// answer is `she` at 1, `he` at 2 and `hers` at 2 — the example from
+// Aho and Corasick's 1975 paper.
+//
+// ```novo
+// use acauto
+// use acfind
+//
+// fn main() [io]
+//     match acauto.build(["he", "she", "his", "hers"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             match acfind.find_overlapping(a, "ushers")
+//                 Ok(ms) => println("${list.len(ms)}")      // 3
+//                 Err(_) => println("this automaton is not standard")
+// ```
+pub fn find_overlapping(a: acauto.AcAutomaton,
+                        haystack: Str) -> Result<[acmatch.AcMatch], acerror.AcError> []
+    todo("ahocorasick-nv.acfind.find_overlapping")
+
+// A cursor at the start of a haystack.
+//
+// ```novo
+// use acauto
+// use acfind
+//
+// fn main() [io]
+//     match acauto.build(["he"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acfind.cursor_offset(acfind.cursor(a, "ushers"))}")   // 0
+// ```
+pub fn cursor(a: acauto.AcAutomaton, haystack: Str) -> AcCursor []
+    todo("ahocorasick-nv.acfind.cursor")
+
+// A cursor at a byte offset into a haystack.
+//
+// ```novo
+// use acauto
+// use acfind
+//
+// fn main() [io]
+//     match acauto.build(["he"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acfind.cursor_offset(acfind.cursor_at(a, "ushers", 3))}")   // 3
+// ```
+pub fn cursor_at(a: acauto.AcAutomaton, haystack: Str, at: Int) -> AcCursor []
+    todo("ahocorasick-nv.acfind.cursor_at")
+
+// The byte offset a cursor will search from next.
+//
+// ```novo
+// use acauto
+// use acfind
+//
+// fn main() [io]
+//     match acauto.build(["he"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acfind.cursor_offset(acfind.cursor(a, ""))}")   // 0
+// ```
+pub fn cursor_offset(c: AcCursor) -> Int []
+    todo("ahocorasick-nv.acfind.cursor_offset")
+
+// One non-overlapping match, and the cursor that follows it.
+//
+// The iteration `find_all` builds a list from, with no list.  The
+// sequence of matches from repeated `step` calls is exactly
+// `find_all`'s answer.
+//
+// ```novo
+// use acauto
+// use acfind
+//
+// fn main() [io]
+//     match acauto.build(["he", "she"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             var c = acfind.cursor(a, "usher she")
+//             var n = 0
+//             loop
+//                 let s = acfind.step(c)
+//                 match s.found
+//                     None    => break
+//                     Some(_) => n += 1
+//                 c = s.next
+//             println("${n}")
+// ```
+pub fn step(c: AcCursor) -> AcStep []
+    todo("ahocorasick-nv.acfind.step")

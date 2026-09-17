@@ -1,0 +1,115 @@
+// acreplace_tests.nv — rewriting, and the length check that stops a
+// document coming out quietly wrong.  Also the last of the public
+// surface: the match value, the error's sentence, and the two lookups
+// the other suites did not reach.
+//
+// RED ON PURPOSE.
+
+use std.test
+use acauto
+use acerror
+use acmatch
+use acreplace
+
+// A replacement that leaves the second pattern alone, to show the
+// callback form reading the match it was given.
+fn fox_or_same(m: acmatch.AcMatch, haystack: Str) -> Str
+    if m.pattern == 0
+        "fox"
+    else
+        acmatch.matched_text(haystack, m)
+
+@test
+fn test_a_replacement_list_is_indexed_by_pattern() [io]
+    test.case("pattern 0 takes replacement 0")
+    match acauto.build(["cat", "dog"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            match acreplace.replace_all(a, "a cat and a dog", ["fox", "owl"])
+                Err(_) => test.fail("two replacements for two patterns fit")
+                Ok(s)  => test.assert(s == "a fox and a owl")
+
+    test.case("replace_first stops after one")
+    match acauto.build(["cat", "dog"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            match acreplace.replace_first(a, "a cat and a cat", ["fox", "owl"])
+                Err(_) => test.fail("two replacements for two patterns fit")
+                Ok(s)  => test.assert(s == "a fox and a cat")
+
+@test
+fn test_a_short_replacement_list_is_refused_with_both_lengths() [io]
+    // The reference implementations do not check this.  The symptom
+    // of the unchecked version is a document that came out slightly
+    // wrong and nothing in any log.
+    test.case("one replacement for two patterns is refused")
+    match acauto.build(["cat", "dog"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            match acreplace.replace_all(a, "a cat", ["fox"])
+                Ok(_)  => test.fail("a short list must not be used")
+                Err(e) =>
+                    test.assert(acerror.code(e) == "replacement-count-mismatch")
+                    test.assert(str.len(acerror.message(e)) > 0)
+
+    test.case("and the same check is available before the call")
+    match acauto.build(["cat", "dog"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            test.assert(acreplace.replacements_fit(a, ["fox"]) == false)
+            test.assert(acreplace.replacements_fit(a, ["fox", "owl"]))
+
+@test
+fn test_the_callback_form_and_the_split_are_the_two_halves() [io]
+    test.case("a function per match reads the match it is given")
+    match acauto.build(["cat", "dog"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            test.assert(acreplace.replace_all_with(a, "a cat and a dog", fox_or_same)
+                        == "a fox and a dog")
+
+    test.case("split gives one more piece than there are matches")
+    match acauto.build(["cat"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  => test.assert(list.len(acreplace.split(a, "cat and cat")) == 3)
+
+    test.case("including the empty pieces at the ends")
+    match acauto.build(["cat"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  =>
+            let parts = acreplace.split(a, "cat")
+            test.assert(list.len(parts) == 2)
+            test.assert(parts[0] == "")
+            test.assert(parts[1] == "")
+
+@test
+fn test_a_match_is_a_range_and_the_order_over_ranges_is_total() [io]
+    test.case("a match value is built from its three numbers")
+    let m = acmatch.at(1, 2, 6)
+    test.assert(m.pattern == 1)
+    test.assert(m.start == 2)
+    test.assert(m.end == 6)
+
+    test.case("overlapping is sharing at least one byte")
+    test.assert(acmatch.overlaps(acmatch.at(0, 0, 4), acmatch.at(1, 2, 6)))
+    test.assert(acmatch.overlaps(acmatch.at(0, 0, 2), acmatch.at(1, 2, 6)) == false)
+
+    test.case("the order is start, then end, then pattern")
+    test.assert(acmatch.compare(acmatch.at(0, 1, 4), acmatch.at(1, 2, 4)) < 0)
+    test.assert(acmatch.compare(acmatch.at(0, 1, 4), acmatch.at(1, 1, 6)) < 0)
+    test.assert(acmatch.compare(acmatch.at(0, 1, 4), acmatch.at(0, 1, 4)) == 0)
+
+@test
+fn test_the_two_lookups_a_configuration_file_needs() [io]
+    test.case("a semantics name round-trips")
+    match acauto.kind_named("leftmost-longest")
+        None    => test.fail("that is one of the three names")
+        Some(k) => test.assert(acauto.kind_name(k) == "leftmost-longest")
+
+    test.case("an unknown name is None rather than a default")
+    test.assert_none(acauto.kind_named("posix"))
+
+    test.case("case folding does nothing to a pattern with no ASCII letter")
+    let notes = acauto.case_fold_notes(["he", "123", "she"])
+    test.assert(list.len(notes) == 1)
+    test.assert(notes[0] == 1)

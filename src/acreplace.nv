@@ -1,0 +1,141 @@
+// acreplace.nv — rewriting a haystack with one pass of the automaton.
+//
+// THE REPLACEMENT LIST IS INDEXED BY PATTERN, AND ITS LENGTH IS
+// CHECKED
+//
+// `replacements[i]` is what pattern `i` is replaced by, so the two
+// lists are read together and a list of the wrong length is a set of
+// patterns replaced by whatever was at that index.  The reference
+// implementations do not check: one panics on the index, the other
+// substitutes the empty string.  Here it is
+// `AcReplacementCountMismatch` with both lengths named, because the
+// symptom of the unchecked version is a document that came out
+// slightly wrong and nothing in any log.
+//
+// THE CALLBACK FORM IS PURE, AND THAT IS A LIMIT
+//
+// `replace_all_with` takes `fn(AcMatch, Str) -> Str`, a function with
+// an empty effect row, so a replacement cannot read a file, query a
+// database or write a log.  That is not a choice about what is
+// tasteful: this package is `core`, a free function in novo-lang
+// cannot be effect-polymorphic (SPEC § 5.6 gives effect parameters to
+// traits only), and a concrete effectful row here would be charged to
+// every caller of the module.  A caller that needs an effectful
+// replacement collects the matches with `acfind.find_all` and builds
+// the output itself, where the effect is its own.
+//
+// `split` is published for that caller: the unmatched pieces, in
+// order, which is the other half of a rewrite and the part that is
+// tedious to get right at the ends.
+
+use acauto
+use acerror
+use acmatch
+
+// Replace every non-overlapping match, pattern `i` by
+// `replacements[i]`.
+//
+// Answers `AcReplacementCountMismatch` when the two lists are not the
+// same length.  Overlaps are resolved by the automaton's semantics
+// before any replacement happens, so the output never contains a
+// fragment of one pattern inside the replacement of another.
+//
+// ```novo
+// use acauto
+// use acreplace
+//
+// fn main() [io]
+//     match acauto.build(["cat", "dog"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             match acreplace.replace_all(a, "a cat and a dog", ["fox", "owl"])
+//                 Ok(s)  => println(s)         // a fox and a owl
+//                 Err(_) => println("the replacement list is the wrong length")
+// ```
+pub fn replace_all(a: acauto.AcAutomaton, haystack: Str,
+                   replacements: [Str]) -> Result<Str, acerror.AcError> []
+    todo("ahocorasick-nv.acreplace.replace_all")
+
+// Replace the first match only.
+//
+// The same length check applies, because the pattern that matches
+// first is not known until the search has run.
+//
+// ```novo
+// use acauto
+// use acreplace
+//
+// fn main() [io]
+//     match acauto.build(["cat", "dog"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  =>
+//             match acreplace.replace_first(a, "a cat and a cat", ["fox", "owl"])
+//                 Ok(s)  => println(s)         // a fox and a cat
+//                 Err(_) => println("the replacement list is the wrong length")
+// ```
+pub fn replace_first(a: acauto.AcAutomaton, haystack: Str,
+                     replacements: [Str]) -> Result<Str, acerror.AcError> []
+    todo("ahocorasick-nv.acreplace.replace_first")
+
+// Replace every non-overlapping match with what a function answers
+// for it.
+//
+// The function is given the match and the haystack, so it can read
+// the matched bytes, the pattern index and the offset.  It performs no
+// effects; see the module comment for what to do when a replacement
+// needs one.
+//
+// ```novo
+// use acauto
+// use acmatch
+// use acreplace
+//
+// fn upper_or_same(m: acmatch.AcMatch, haystack: Str) -> Str
+//     if m.pattern == 0 then "FOX" else acmatch.matched_text(haystack, m)
+//
+// fn main() [io]
+//     match acauto.build(["cat", "dog"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println(acreplace.replace_all_with(a, "a cat", upper_or_same))
+// ```
+pub fn replace_all_with(a: acauto.AcAutomaton, haystack: Str,
+                        f: fn(acmatch.AcMatch, Str) -> Str) -> Str []
+    todo("ahocorasick-nv.acreplace.replace_all_with")
+
+// The pieces of the haystack between the non-overlapping matches, in
+// order.
+//
+// There is always one more piece than there are matches, counting the
+// empty pieces at the ends, so a caller can interleave the two lists
+// without a special case for a haystack that begins or ends with a
+// match.
+//
+// ```novo
+// use acauto
+// use acreplace
+//
+// fn main() [io]
+//     match acauto.build(["cat"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${list.len(acreplace.split(a, "cat and cat"))}")   // 3
+// ```
+pub fn split(a: acauto.AcAutomaton, haystack: Str) -> [Str] []
+    todo("ahocorasick-nv.acreplace.split")
+
+// Whether a replacement list can be used with an automaton.
+//
+// The same check `replace_all` runs, published so a caller can run it
+// once at start-up rather than meeting the refusal on the first
+// document.
+//
+// ```novo
+// use acauto
+// use acreplace
+//
+// fn main() [io]
+//     match acauto.build(["cat", "dog"])
+//         Err(_) => println("the set is not usable")
+//         Ok(a)  => println("${acreplace.replacements_fit(a, ["fox"])}")   // false
+// ```
+pub fn replacements_fit(a: acauto.AcAutomaton, replacements: [Str]) -> Bool []
+    todo("ahocorasick-nv.acreplace.replacements_fit")
