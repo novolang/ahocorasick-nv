@@ -48,6 +48,20 @@ pub enum AcError
     // whatever happened to be at that index, or by nothing.
     AcReplacementCountMismatch(patterns: Int, replacements: Int)
 
+// `AcError` is an `Error`, which is what lets `Result<T, AcError>`
+// exist at all — `acauto.build` and `acauto.build_with`,
+// `acfind.find_overlapping`, and `acreplace.replace_all` and
+// `acreplace.replace_first` are every signature in the package that
+// answers with one.
+impl Error for AcError
+    // The one-line message: `acerror.message`'s sentence, the refusal
+    // named together with the pattern index or the two counts that
+    // make it something the caller can act on.
+    //
+    // Panics with `not implemented` until the bodies land.
+    fn message(self) -> Str
+        todo("ahocorasick-nv.AcError.message")
+
 // The refusal as a sentence, ending without a full stop, suitable for
 // a log line or an error message the caller composes.
 //
