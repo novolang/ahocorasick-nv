@@ -1,39 +1,36 @@
 // acauto.nv — the automaton, built once, and the three match
 // semantics it can be built for.
 //
-// THE SEMANTICS ARE CHOSEN AT BUILD, NOT AT SEARCH
-//
 // Aho and Corasick's construction is a trie of the patterns with a
-// failure link on every node and an output set on the nodes that end
-// a pattern.  That automaton reports every occurrence of every
-// pattern, which is what this package calls STANDARD semantics.
+// failure link on every node and an output set on the nodes where a
+// pattern ends.  Here the failure links are folded into a dense
+// transition table, 256 entries per state, so a search reads one
+// entry per byte and never follows a link.  That automaton reports
+// every occurrence of every pattern, which this package calls
+// standard semantics.
 //
-// The two leftmost semantics are not a filter over those reports.
-// They need the automaton itself to be built differently, because a
-// leftmost automaton has to know, at a node, which of the candidates
-// still alive can win — and the losing candidates are dropped during
-// construction rather than discovered during the search.  So the
-// semantics is a field of `AcConfig`, read once by `build_with`, and
-// no search function takes one.
+// The match semantics is a field of `AcConfig`, read once by
+// `build_with`, and no search function takes one.  Under
+// leftmost-first a pattern that has an earlier pattern as a prefix can
+// never be reported, because wherever it matches the earlier one
+// matches at the same start.  Such a pattern, and a repeated pattern
+// under either leftmost semantics, is left out of the output sets
+// while the tables are made.
 //
-// The consequence a caller meets is `supports_overlapping`.  A
-// leftmost automaton cannot answer an overlapping query at all: the
-// shorter candidates it would have to report are not in its tables.
-// The reference implementation panics on that call.  Here the
-// automaton answers the question before the call, and
-// `acfind.find_overlapping` answers `AcOverlappingNeedsStandard`
-// rather than ending the program.
+// A leftmost search reports the match with the smallest start, and it
+// cannot report a candidate while the automaton is inside a prefix
+// that began at or before the candidate's start.  The table `depth`
+// gives the length of that prefix, and the table `live` gives the
+// longest suffix that can still grow into a longer match.  Together
+// they decide when a candidate is final.
 //
-// ASCII CASE-INSENSITIVITY IS A BUILD OPTION, AND IS ASCII ONLY
-//
-// Folding changes the transitions, so it belongs in the construction
-// and not in the search.  It is ASCII only, deliberately: Unicode
-// case folding is not length-preserving — `ß` folds to `ss` — so a
-// Unicode-folding automaton could not report byte ranges into the
-// caller's own haystack, which is the whole shape of `AcMatch`.  A
-// caller that wants Unicode folding folds the haystack and the
-// patterns itself, with unicode-nv, and accepts that the offsets are
-// into the folded text.  `case_fold_notes` names the patterns for
+// ASCII case folding is a build option because it changes the
+// transitions.  The patterns are folded when the trie is made, and the
+// rows for `A` to `Z` are copied from the rows for `a` to `z`, so the
+// search itself does not fold.  Folding is ASCII only.  Unicode case
+// folding is not length-preserving (`ß` folds to `ss`), and an
+// automaton that did it could not report byte ranges into the
+// caller's own haystack.  `case_fold_notes` names the patterns for
 // which the ASCII option does nothing.
 
 use acerror
@@ -53,15 +50,16 @@ pub enum AcMatchKind
     // `hers` and the haystack `ushers`, the reports are `she` at 1,
     // `he` at 2 and `hers` at 2.
     AcStandard
-    // At each position the pattern that appears EARLIEST IN THE
-    // PATTERN LIST wins, and a match consumes the bytes it covers.
+    // At the leftmost position where a match starts, the pattern that
+    // appears earliest in the pattern list wins, and a match consumes
+    // the bytes it covers.
     // This is the semantics of an alternation in a backtracking
     // regular expression, and it is the one a caller who wrote the
     // list in priority order wants.  Over `Sam` and `Samwise` in that
     // order, `Samwise` reports `Sam`.
     AcLeftmostFirst
-    // At each position the LONGEST pattern wins, whatever order the
-    // list is in.  This is POSIX alternation semantics.  Over `Sam`
+    // At the leftmost position where a match starts, the longest
+    // pattern wins, whatever order the list is in.  This is POSIX alternation semantics.  Over `Sam`
     // and `Samwise` in either order, `Samwise` reports `Samwise`.
     AcLeftmostLongest
 
@@ -117,8 +115,16 @@ pub struct AcAutomaton
     // The index into `match_pattern` at which state `s`'s output set
     // begins.  The set ends where state `s + 1`'s begins.
     match_start: [Int]
-    // The pattern indices of every output set, concatenated.
+    // The pattern indices of every output set, concatenated.  Within a
+    // set the patterns ending at the state itself come first, in list
+    // order, and the longer patterns come before the shorter ones.
     match_pattern: [Int]
+    // The length of the trie prefix each state stands for, in bytes.
+    depth: [Int]
+    // For each state, the nearest state on its failure chain, itself
+    // included, that has a child in the trie, or the root.  It is the
+    // longest suffix of the bytes read that a later byte can extend.
+    live: [Int]
 
 // The default configuration: standard semantics, case-sensitive.
 //
@@ -129,7 +135,7 @@ pub struct AcAutomaton
 //     println("${acauto.config().ascii_case_insensitive}")   // false
 // ```
 pub fn config() -> AcConfig []
-    todo("ahocorasick-nv.acauto.config")
+    AcConfig { kind: AcStandard, ascii_case_insensitive: false }
 
 // The same configuration with a different match semantics.
 //
@@ -141,7 +147,7 @@ pub fn config() -> AcConfig []
 //     println(acauto.kind_name(c.kind))       // leftmost-first
 // ```
 pub fn with_kind(c: AcConfig, kind: AcMatchKind) -> AcConfig []
-    todo("ahocorasick-nv.acauto.with_kind")
+    AcConfig { kind: kind, ascii_case_insensitive: c.ascii_case_insensitive }
 
 // The same configuration with ASCII case folding turned on or off.
 //
@@ -153,7 +159,7 @@ pub fn with_kind(c: AcConfig, kind: AcMatchKind) -> AcConfig []
 //     println("${c.ascii_case_insensitive}")   // true
 // ```
 pub fn with_ascii_case_insensitive(c: AcConfig, on: Bool) -> AcConfig []
-    todo("ahocorasick-nv.acauto.with_ascii_case_insensitive")
+    AcConfig { kind: c.kind, ascii_case_insensitive: on }
 
 // Build an automaton over a pattern list, with standard semantics and
 // no case folding.
@@ -170,7 +176,7 @@ pub fn with_ascii_case_insensitive(c: AcConfig, on: Bool) -> AcConfig []
 //         Ok(a)  => println("${acauto.state_count(a)}")
 // ```
 pub fn build(patterns: [Str]) -> Result<AcAutomaton, acerror.AcError> []
-    todo("ahocorasick-nv.acauto.build")
+    build_with(patterns, config())
 
 // Build an automaton over a pattern list, with a configuration.
 //
@@ -184,7 +190,9 @@ pub fn build(patterns: [Str]) -> Result<AcAutomaton, acerror.AcError> []
 //         Ok(a)  => println(acauto.kind_name(acauto.kind_of(a)))
 // ```
 pub fn build_with(patterns: [Str], c: AcConfig) -> Result<AcAutomaton, acerror.AcError> []
-    todo("ahocorasick-nv.acauto.build_with")
+    match first_fault(patterns)
+        Some(e) => Err(e)
+        None    => Ok(construct(patterns, c))
 
 // The semantics the automaton was built for.
 //
@@ -197,7 +205,7 @@ pub fn build_with(patterns: [Str], c: AcConfig) -> Result<AcAutomaton, acerror.A
 //         Ok(a)  => println(acauto.kind_name(acauto.kind_of(a)))   // standard
 // ```
 pub fn kind_of(a: AcAutomaton) -> AcMatchKind []
-    todo("ahocorasick-nv.acauto.kind_of")
+    a.kind
 
 // The semantics as a stable name: `"standard"`, `"leftmost-first"`,
 // `"leftmost-longest"`.
@@ -209,7 +217,10 @@ pub fn kind_of(a: AcAutomaton) -> AcMatchKind []
 //     println(acauto.kind_name(AcStandard))    // standard
 // ```
 pub fn kind_name(k: AcMatchKind) -> Str []
-    todo("ahocorasick-nv.acauto.kind_name")
+    match k
+        AcStandard        => "standard"
+        AcLeftmostFirst   => "leftmost-first"
+        AcLeftmostLongest => "leftmost-longest"
 
 // The semantics a name denotes, or `None`.
 //
@@ -225,7 +236,13 @@ pub fn kind_name(k: AcMatchKind) -> Str []
 //         None    => println("not a semantics this package has")
 // ```
 pub fn kind_named(name: Str) -> ?AcMatchKind []
-    todo("ahocorasick-nv.acauto.kind_named")
+    if name == "standard"
+        return Some(AcStandard)
+    if name == "leftmost-first"
+        return Some(AcLeftmostFirst)
+    if name == "leftmost-longest"
+        return Some(AcLeftmostLongest)
+    None
 
 // How many patterns the automaton holds.
 //
@@ -238,7 +255,7 @@ pub fn kind_named(name: Str) -> ?AcMatchKind []
 //         Ok(a)  => println("${acauto.pattern_count(a)}")    // 2
 // ```
 pub fn pattern_count(a: AcAutomaton) -> Int []
-    todo("ahocorasick-nv.acauto.pattern_count")
+    list.len(a.patterns)
 
 // The pattern at an index, or `None` when the index is out of range.
 //
@@ -257,7 +274,9 @@ pub fn pattern_count(a: AcAutomaton) -> Int []
 //                 None    => println("no such pattern")
 // ```
 pub fn pattern_at(a: AcAutomaton, index: Int) -> ?Str []
-    todo("ahocorasick-nv.acauto.pattern_at")
+    if index < 0 or index >= list.len(a.patterns)
+        return None
+    Some(a.patterns[index])
 
 // The length in bytes of the shortest pattern in the set.
 //
@@ -270,7 +289,11 @@ pub fn pattern_at(a: AcAutomaton, index: Int) -> ?Str []
 //         Ok(a)  => println("${acauto.min_pattern_len(a)}")   // 2
 // ```
 pub fn min_pattern_len(a: AcAutomaton) -> Int []
-    todo("ahocorasick-nv.acauto.min_pattern_len")
+    var least = str.len(a.patterns[0])
+    for p in a.patterns
+        if str.len(p) < least
+            least = str.len(p)
+    least
 
 // The length in bytes of the longest pattern in the set.
 //
@@ -287,7 +310,11 @@ pub fn min_pattern_len(a: AcAutomaton) -> Int []
 //         Ok(a)  => println("${acauto.max_pattern_len(a)}")   // 4
 // ```
 pub fn max_pattern_len(a: AcAutomaton) -> Int []
-    todo("ahocorasick-nv.acauto.max_pattern_len")
+    var most = 0
+    for p in a.patterns
+        if str.len(p) > most
+            most = str.len(p)
+    most
 
 // Whether the automaton folds ASCII letters.
 //
@@ -301,7 +328,7 @@ pub fn max_pattern_len(a: AcAutomaton) -> Int []
 //         Ok(a)  => println("${acauto.is_ascii_case_insensitive(a)}")   // true
 // ```
 pub fn is_ascii_case_insensitive(a: AcAutomaton) -> Bool []
-    todo("ahocorasick-nv.acauto.is_ascii_case_insensitive")
+    a.ascii_case_insensitive
 
 // Whether `acfind.find_overlapping` can be called on this automaton.
 //
@@ -319,7 +346,7 @@ pub fn is_ascii_case_insensitive(a: AcAutomaton) -> Bool []
 //         Ok(a)  => println("${acauto.supports_overlapping(a)}")   // false
 // ```
 pub fn supports_overlapping(a: AcAutomaton) -> Bool []
-    todo("ahocorasick-nv.acauto.supports_overlapping")
+    is_standard(a.kind)
 
 // How many states the automaton has.
 //
@@ -336,9 +363,10 @@ pub fn supports_overlapping(a: AcAutomaton) -> Bool []
 //         Ok(a)  => println("${acauto.state_count(a)}")    // 3
 // ```
 pub fn state_count(a: AcAutomaton) -> Int []
-    todo("ahocorasick-nv.acauto.state_count")
+    list.len(a.fail)
 
-// How many bytes of the automaton's tables are held.
+// How many bytes of the automaton's tables are held, counting eight
+// bytes for each table entry.
 //
 // The dense transition table is 256 entries per state, so this number
 // grows quickly with the number of distinct prefixes and a caller
@@ -353,7 +381,9 @@ pub fn state_count(a: AcAutomaton) -> Int []
 //         Ok(a)  => println("${acauto.memory_bytes(a)}")
 // ```
 pub fn memory_bytes(a: AcAutomaton) -> Int []
-    todo("ahocorasick-nv.acauto.memory_bytes")
+    let entries = list.len(a.transitions) + list.len(a.fail) + list.len(a.match_start)
+                  + list.len(a.match_pattern) + list.len(a.depth) + list.len(a.live)
+    entries * 8
 
 // The indices of the patterns for which ASCII case folding does
 // nothing, because they contain no ASCII letter at all.
@@ -370,4 +400,142 @@ pub fn memory_bytes(a: AcAutomaton) -> Int []
 //     println("${list.len(acauto.case_fold_notes(["he", "123"]))}")   // 1
 // ```
 pub fn case_fold_notes(patterns: [Str]) -> [Int] []
-    todo("ahocorasick-nv.acauto.case_fold_notes")
+    var out: [Int] = []
+    for i in 0..list.len(patterns)
+        if not has_ascii_letter(patterns[i])
+            list.push(out, i)
+    out
+
+// Whether a semantics is standard.
+fn is_standard(k: AcMatchKind) -> Bool
+    match k
+        AcStandard => true
+        _          => false
+
+// Whether a semantics is leftmost-first.
+fn is_leftmost_first(k: AcMatchKind) -> Bool
+    match k
+        AcLeftmostFirst => true
+        _               => false
+
+// The byte with `A` to `Z` folded to `a` to `z`.
+fn fold(b: Int) -> Int
+    if b >= 'A' and b <= 'Z'
+        return b + 32
+    b
+
+// Whether a string holds at least one ASCII letter.
+fn has_ascii_letter(s: Str) -> Bool
+    for i in 0..str.len(s)
+        let b = fold(str.byte_at_or(s, i, 0))
+        if b >= 'a' and b <= 'z'
+            return true
+    false
+
+// The first reason the pattern list cannot be built, or `None`.
+fn first_fault(patterns: [Str]) -> ?acerror.AcError
+    if list.len(patterns) == 0
+        return Some(AcNoPatterns)
+    for i in 0..list.len(patterns)
+        if str.len(patterns[i]) == 0
+            return Some(AcEmptyPattern(i))
+    None
+
+// The trie of the patterns, before the failure links are computed.
+struct Trie
+    // The children, 256 entries per state; 0 means no child, because
+    // the root is never a child.
+    var next: [Int]
+    var depth: [Int]
+    // Whether each state has at least one child.
+    var inner: [Bool]
+    // The patterns ending at each state, in list order.
+    var own: [[Int]]
+
+// A trie holding the root alone.
+fn trie_root() -> Trie
+    Trie { next: list.zeros(256), depth: [0], inner: [false], own: [[]] }
+
+// Add a state below `parent` on byte `b`, and answer it.
+fn trie_add(var t: Trie, parent: Int, b: Int) -> Int
+    let s = list.len(t.depth)
+    list.append(t.next, list.zeros(256))
+    list.push(t.depth, t.depth[parent] + 1)
+    list.push(t.inner, false)
+    list.push(t.own, [])
+    t.next[parent * 256 + b] = s
+    t.inner[parent] = true
+    s
+
+// Insert pattern `index` into the trie.  Under a leftmost semantics a
+// pattern that repeats an earlier one is left out, and under
+// leftmost-first so is a pattern that has an earlier pattern as a
+// prefix: neither could ever be reported.
+fn trie_insert(var t: Trie, pattern: Str, index: Int, c: AcConfig)
+    let first = is_leftmost_first(c.kind)
+    var s = 0
+    for i in 0..str.len(pattern)
+        if first and list.len(t.own[s]) > 0
+            return
+        var b = str.byte_at_or(pattern, i, 0)
+        if c.ascii_case_insensitive
+            b = fold(b)
+        var child = t.next[s * 256 + b]
+        if child == 0
+            child = trie_add(t, s, b)
+        s = child
+    if not is_standard(c.kind) and list.len(t.own[s]) > 0
+        return
+    t.own[s] = list.concat(t.own[s], [index])
+
+// Build the tables from a pattern list already checked by
+// `first_fault`.
+fn construct(patterns: [Str], c: AcConfig) -> AcAutomaton
+    var t = trie_root()
+    for i in 0..list.len(patterns)
+        trie_insert(t, patterns[i], i, c)
+    let n = list.len(t.depth)
+    var delta = t.next
+    var fail = list.zeros(n)
+    var live = list.zeros(n)
+    var outs: [[Int]] = []
+    for _ in 0..n
+        list.push(outs, [])
+    // One depth at a time, so a state's failure target, which is
+    // shallower, has its row and its output set complete before the
+    // state is reached.
+    var level: [Int] = [0]
+    while not list.is_empty(level)
+        var deeper: [Int] = []
+        for u in level
+            let f = fail[u]
+            outs[u] = list.concat(t.own[u], outs[f])
+            live[u] = if t.inner[u] or u == 0
+                u
+            else
+                live[f]
+            for b in 0..256
+                let v = delta[u * 256 + b]
+                let via = if u == 0
+                    0
+                else
+                    delta[f * 256 + b]
+                if v != 0
+                    fail[v] = via
+                    list.push(deeper, v)
+                else
+                    delta[u * 256 + b] = via
+        level = deeper
+    if c.ascii_case_insensitive
+        for s in 0..n
+            for b in 'A'..'Z' + 1
+                delta[s * 256 + b] = delta[s * 256 + b + 32]
+    var starts: [Int] = []
+    var flat: [Int] = []
+    for s in 0..n
+        list.push(starts, list.len(flat))
+        list.append(flat, outs[s])
+    list.push(starts, list.len(flat))
+    AcAutomaton { patterns: patterns, kind: c.kind, ascii_case_insensitive: c.ascii_case_insensitive,
+                  transitions: delta, fail: fail, match_start: starts, match_pattern: flat,
+                  depth: t.depth, live: live }

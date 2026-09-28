@@ -1,19 +1,13 @@
 // acmatch.nv — a match is a pattern index and a byte range, never a
 // copied string.
 //
-// WHY THE MATCH DOES NOT CARRY ITS TEXT
+// A scan over a large haystack reports many matches.  Counting them,
+// replacing them and recording where they were needs no copy of the
+// matched bytes, and a match that carried one would allocate once per
+// hit.  `matched_text` makes the copy where a reader can see it.
 //
-// A multi-pattern scan over a large haystack reports a great many
-// matches, and the caller of a scan usually wants to do one of three
-// things with each: count it, replace it, or record where it was.
-// None of those needs a copy of the matched bytes, and a match that
-// carried one would allocate once per hit.  `matched_text` is the
-// fourth thing, spelled out, so the copy happens where a reader can
-// see it.
-//
-// The range is `[start, end)` in BYTES, which is what the automaton
-// works in.  A caller that wants character offsets converts them; a
-// caller that wants to slice the haystack does not have to.
+// The range is `[start, end)` in bytes, the unit the automaton works
+// in.  A caller slicing the haystack uses the offsets as they are.
 
 // One reported match: which pattern, and where in the haystack.
 //
@@ -48,7 +42,7 @@ pub struct AcMatch
 //     println("${m.pattern} ${m.start} ${m.end}")   // 1 0 3
 // ```
 pub fn at(pattern: Int, start: Int, end: Int) -> AcMatch []
-    todo("ahocorasick-nv.acmatch.at")
+    AcMatch { pattern: pattern, start: start, end: end }
 
 // The length of the match in bytes: `end - start`.
 //
@@ -59,7 +53,7 @@ pub fn at(pattern: Int, start: Int, end: Int) -> AcMatch []
 //     println("${acmatch.len(acmatch.at(0, 2, 7))}")   // 5
 // ```
 pub fn len(m: AcMatch) -> Int []
-    todo("ahocorasick-nv.acmatch.len")
+    m.end - m.start
 
 // The matched bytes, copied out of the haystack the match came from.
 //
@@ -81,7 +75,7 @@ pub fn len(m: AcMatch) -> Int []
 //                 Some(m) => println(acmatch.matched_text("ushers", m))
 // ```
 pub fn matched_text(haystack: Str, m: AcMatch) -> Str []
-    todo("ahocorasick-nv.acmatch.matched_text")
+    str.slice(haystack, m.start, m.end)
 
 // Whether two matches share at least one byte.
 //
@@ -97,16 +91,14 @@ pub fn matched_text(haystack: Str, m: AcMatch) -> Str []
 //     println("${acmatch.overlaps(acmatch.at(0, 0, 2), acmatch.at(1, 2, 6))}")   // false
 // ```
 pub fn overlaps(a: AcMatch, b: AcMatch) -> Bool []
-    todo("ahocorasick-nv.acmatch.overlaps")
+    a.start < b.end and b.start < a.end
 
 // Order two matches: negative when `a` comes first, zero when they are
 // the same match, positive when `b` comes first.
 //
-// The order is by `start`, then by `end`, then by `pattern`, so it is
-// total and two scans of the same haystack sort identically.  A
-// partial order would leave the report order of an overlapping scan up
-// to the automaton's internal state, which is not something a caller
-// can test against.
+// The order is by `start`, then by `end`, then by `pattern`.  It is
+// total, so two scans of the same haystack sort identically and a
+// test may assert a whole list.
 //
 // ```novo
 // use acmatch
@@ -115,4 +107,8 @@ pub fn overlaps(a: AcMatch, b: AcMatch) -> Bool []
 //     println("${acmatch.compare(acmatch.at(0, 1, 4), acmatch.at(1, 1, 6))}")
 // ```
 pub fn compare(a: AcMatch, b: AcMatch) -> Int []
-    todo("ahocorasick-nv.acmatch.compare")
+    if a.start != b.start
+        return a.start - b.start
+    if a.end != b.end
+        return a.end - b.end
+    a.pattern - b.pattern

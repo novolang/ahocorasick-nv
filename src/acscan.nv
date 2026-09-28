@@ -1,0 +1,119 @@
+// acscan.nv — the search loop every non-overlapping search runs, for
+// a haystack held whole and for one that arrives in chunks.
+//
+// Nothing here is public.  `acfind` and `acstream` are the two ways in.
+//
+// The text a scan reads is `tail` followed by `chunk`.  A search over
+// a whole haystack passes an empty tail.  A stream passes the bytes it
+// carried over from the previous chunk.  `base` is the absolute offset
+// of the first byte of `tail`, so every match reported is an offset
+// into the whole stream.
+//
+// Under standard semantics a match is final as soon as it is seen, and
+// the longest pattern ending at that byte is the one reported.  Under
+// a leftmost semantics a candidate is held until the longest suffix
+// that can still grow into a match starts after the candidate's
+// start.  Until then a match with an earlier start, or a better one
+// at the same start, may still arrive.  After a match the scan starts
+// again at the root, at the match's end, which under a leftmost
+// semantics may mean reading some bytes a second time.
+
+use acauto
+use acmatch
+
+// Where a scan stopped.
+struct ScanOut
+    // The matches that became final, in order.
+    var matches: [acmatch.AcMatch]
+    // The automaton state after the last byte read.
+    node: Int
+    // The leftmost candidate still held, or `None`.
+    pending: ?acmatch.AcMatch
+    // The index into `tail ++ chunk` of the next byte to read.
+    next: Int
+
+// The byte at index `i` of `tail ++ chunk`.
+fn byte_of(tail: Str, chunk: Str, i: Int) -> Int
+    let lt = str.len(tail)
+    if i < lt
+        return str.byte_at_or(tail, i, 0)
+    str.byte_at_or(chunk, i - lt, 0)
+
+// The better of a held candidate and every pattern that ends at
+// absolute offset `pos` in state `full`, under the automaton's
+// semantics.
+fn consider(a: acauto.AcAutomaton, full: Int, pos: Int, held: ?acmatch.AcMatch) -> ?acmatch.AcMatch
+    var best = held
+    for k in a.match_start[full]..a.match_start[full + 1]
+        let p = a.match_pattern[k]
+        let m = acmatch.at(p, pos - str.len(a.patterns[p]), pos)
+        best = better(a.kind, best, m)
+    best
+
+// The candidate a semantics prefers: the held one, unless `m` beats it.
+fn better(kind: acauto.AcMatchKind, held: ?acmatch.AcMatch, m: acmatch.AcMatch) -> ?acmatch.AcMatch
+    match held
+        None    => Some(m)
+        Some(b) =>
+            if wins(kind, m, b)
+                Some(m)
+            else
+                held
+
+// Whether `m` beats the held candidate `b`.  An earlier start always
+// wins.  At the same start, leftmost-first prefers the earlier pattern
+// and leftmost-longest the longer match.  Under standard semantics the
+// first pattern of an output set is the longest, and it is kept.
+fn wins(kind: acauto.AcMatchKind, m: acmatch.AcMatch, b: acmatch.AcMatch) -> Bool
+    if m.start != b.start
+        return m.start < b.start
+    match kind
+        AcLeftmostFirst   => m.pattern < b.pattern
+        AcLeftmostLongest => m.end > b.end
+        AcStandard        => false
+
+// Whether a held candidate can no longer be beaten, with the scan at
+// absolute offset `pos` in state `node`.
+fn settled(a: acauto.AcAutomaton, node: Int, pos: Int, m: acmatch.AcMatch) -> Bool
+    match a.kind
+        AcStandard => true
+        _          => pos - a.depth[node] > m.start
+
+// Scan `tail ++ chunk` from index `from`, in state `node`, holding
+// `pending`.  Stops when `limit` matches are final, or at the end of
+// the text.  With `at_end` the end of the text is the end of the
+// input, so a held candidate is final there.  A negative `limit` means
+// no limit.
+fn run(a: acauto.AcAutomaton, tail: Str, chunk: Str, base: Int, from: Int, node: Int,
+       pending: ?acmatch.AcMatch, at_end: Bool, limit: Int) -> ScanOut
+    let n = str.len(tail) + str.len(chunk)
+    var out: [acmatch.AcMatch] = []
+    var state = node
+    var held = pending
+    var i = from
+    loop
+        if limit >= 0 and list.len(out) >= limit
+            break
+        if i >= n
+            if not at_end
+                break
+            match held
+                None    =>
+                    break
+                Some(m) =>
+                    list.push(out, m)
+                    held = None
+                    state = 0
+                    i = m.end - base
+            continue
+        let full = a.transitions[state * 256 + byte_of(tail, chunk, i)]
+        i += 1
+        held = consider(a, full, base + i, held)
+        state = a.live[full]
+        if let Some(m) = held
+            if settled(a, state, base + i, m)
+                list.push(out, m)
+                held = None
+                state = 0
+                i = m.end - base
+    ScanOut { matches: out, node: state, pending: held, next: i }

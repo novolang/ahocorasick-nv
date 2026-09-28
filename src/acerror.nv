@@ -1,20 +1,17 @@
 // acerror.nv — every way a pattern set or a search can be refused,
 // and which of them is a fault in the caller's configuration.
 //
-// FOUR REFUSALS, AND WHY EACH IS A VALUE RATHER THAN A PANIC
+// Each refusal is an arm of one enum, and every entry point that can
+// meet one answers a `Result`.  None of them ends the program.  The
+// `aho-corasick` crate panics on two of these conditions and accepts
+// the third without comment.  All three are facts a caller can be told
+// about and can correct.
 //
-// The reference implementation panics on two of these and silently
-// accepts a third.  A panic in a library is a crash in somebody
-// else's program, and the three conditions here are all things a
-// caller can be told about and can fix, so each is an arm of one
-// enum and every entry point that can meet one answers a `Result`.
-//
-// `AcOverlappingNeedsStandard` is the one that matters most.
-// Overlapping iteration is only defined under standard semantics: a
-// leftmost automaton discards the shorter candidates during
-// construction, so asking it for overlapping matches cannot be
-// answered from the tables it has.  The reference implementation
-// panics.  Here the automaton is asked, and it answers.
+// Overlapping iteration is defined only under standard semantics.
+// Under a leftmost semantics at most one match is reported for each
+// starting position, so the question has no answer.  The automaton
+// is asked, and `acfind.find_overlapping` answers
+// `AcOverlappingNeedsStandard`.
 
 // Why a pattern set could not be built, or a search could not be run.
 //
@@ -57,10 +54,8 @@ impl Error for AcError
     // The one-line message: `acerror.message`'s sentence, the refusal
     // named together with the pattern index or the two counts that
     // make it something the caller can act on.
-    //
-    // Panics with `not implemented` until the bodies land.
     fn message(self) -> Str
-        todo("ahocorasick-nv.AcError.message")
+        message(self)
 
 // The refusal as a sentence, ending without a full stop, suitable for
 // a log line or an error message the caller composes.
@@ -72,7 +67,11 @@ impl Error for AcError
 //     println(acerror.message(AcEmptyPattern(2)))
 // ```
 pub fn message(e: AcError) -> Str []
-    todo("ahocorasick-nv.acerror.message")
+    match e
+        AcEmptyPattern(i)                => "pattern ${i} is the empty string, which matches at every offset"
+        AcNoPatterns                     => "the pattern list is empty"
+        AcOverlappingNeedsStandard(kind) => "overlapping iteration needs standard semantics, and this automaton is ${kind}"
+        AcReplacementCountMismatch(p, r) => "${p} patterns but ${r} replacements"
 
 // A short stable identifier for the refusal: `"empty-pattern"`,
 // `"no-patterns"`, `"overlapping-needs-standard"`,
@@ -88,7 +87,11 @@ pub fn message(e: AcError) -> Str []
 //     println(acerror.code(AcNoPatterns))          // no-patterns
 // ```
 pub fn code(e: AcError) -> Str []
-    todo("ahocorasick-nv.acerror.code")
+    match e
+        AcEmptyPattern(_)                => "empty-pattern"
+        AcNoPatterns                     => "no-patterns"
+        AcOverlappingNeedsStandard(_)    => "overlapping-needs-standard"
+        AcReplacementCountMismatch(_, _) => "replacement-count-mismatch"
 
 // Whether the refusal is a fault in the pattern set rather than in
 // the call that met it.
@@ -106,4 +109,7 @@ pub fn code(e: AcError) -> Str []
 //     println("${acerror.is_pattern_fault(e)}")   // false
 // ```
 pub fn is_pattern_fault(e: AcError) -> Bool []
-    todo("ahocorasick-nv.acerror.is_pattern_fault")
+    match e
+        AcEmptyPattern(_) => true
+        AcNoPatterns      => true
+        _                 => false

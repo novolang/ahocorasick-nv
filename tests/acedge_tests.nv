@@ -1,0 +1,194 @@
+// acedge_tests.nv — the refusals as sentences, the edges of each
+// search, and the patterns a leftmost automaton leaves out.
+
+use std.test
+use acauto
+use acerror
+use acfind
+use acreplace
+use acstream
+
+@test
+fn test_every_refusal_has_a_sentence_and_a_code() [io]
+    test.case("an empty pattern names its index")
+    let empty = AcEmptyPattern(2)
+    test.assert_eq_str(acerror.message(empty), "pattern 2 is the empty string, which matches at every offset")
+    test.assert(acerror.is_pattern_fault(empty))
+
+    test.case("an empty list")
+    test.assert_eq_str(acerror.message(AcNoPatterns), "the pattern list is empty")
+    test.assert(acerror.is_pattern_fault(AcNoPatterns))
+
+    test.case("overlapping on a leftmost automaton names the semantics")
+    let over = AcOverlappingNeedsStandard("leftmost-first")
+    test.assert_eq_str(acerror.message(over),
+                       "overlapping iteration needs standard semantics, and this automaton is leftmost-first")
+    test.assert(acerror.is_pattern_fault(over) == false)
+
+    test.case("a replacement list of the wrong length names both lengths")
+    let short = AcReplacementCountMismatch(2, 1)
+    test.assert_eq_str(acerror.message(short), "2 patterns but 1 replacements")
+    test.assert_eq_str(acerror.code(short), "replacement-count-mismatch")
+
+    test.case("the Error implementation answers the same sentence")
+    test.assert_eq_str(short.message(), acerror.message(short))
+
+@test
+fn test_the_build_names_the_first_empty_pattern() [io]
+    match acauto.build(["he", "", "she", ""])
+        Ok(_)  => test.fail("an empty pattern is refused")
+        Err(e) => test.assert_eq_str(acerror.message(e), acerror.message(AcEmptyPattern(1)))
+
+@test
+fn test_the_three_names_round_trip() [io]
+    for name in ["standard", "leftmost-first", "leftmost-longest"]
+        match acauto.kind_named(name)
+            None    => test.fail("${name} is one of the three names")
+            Some(k) => test.assert_eq_str(acauto.kind_name(k), name)
+
+@test
+fn test_the_lengths_of_the_set() [io]
+    test.case("the shortest pattern may come after a longer one")
+    match acauto.build(["hers", "she", "he"])
+        Err(_) => test.fail("three non-empty patterns build")
+        Ok(a)  =>
+            test.assert(acauto.min_pattern_len(a) == 2)
+            test.assert(acauto.max_pattern_len(a) == 4)
+
+    test.case("a negative index is None")
+    match acauto.build(["he"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  => test.assert_none(acauto.pattern_at(a, 0 - 1))
+
+    test.case("the tables are eight bytes an entry")
+    match acauto.build(["a"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  =>
+            // Two states: 512 transitions, and per state a failure link,
+            // a depth and a live state; three output-set bounds; one
+            // output.
+            test.assert(acauto.memory_bytes(a) == (512 + 2 + 3 + 1 + 2 + 2) * 8)
+
+@test
+fn test_leftmost_first_leaves_out_a_pattern_that_can_never_win() [io]
+    // `Samwise` has the earlier pattern `Sam` as a prefix, so wherever
+    // it matches `Sam` matches at the same start and wins.
+    let c = acauto.with_kind(acauto.config(), AcLeftmostFirst)
+    match acauto.build_with(["Sam", "Samwise"], c)
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            test.assert(acauto.state_count(a) == 4)
+            test.assert(acauto.pattern_count(a) == 2)
+            test.assert(list.len(acfind.find_all(a, "Samwise Samwise")) == 2)
+
+    test.case("the standard automaton keeps both")
+    match acauto.build(["Sam", "Samwise"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  => test.assert(acauto.state_count(a) == 8)
+
+@test
+fn test_a_repeated_pattern() [io]
+    test.case("standard semantics reports both copies when overlapping")
+    match acauto.build(["ab", "ab"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            match acfind.find_overlapping(a, "xab")
+                Err(_) => test.fail("a standard automaton answers overlapping")
+                Ok(ms) =>
+                    test.assert(list.len(ms) == 2)
+                    test.assert(ms[0].pattern == 0 and ms[1].pattern == 1)
+            match acfind.find(a, "xab")
+                None    => test.fail("xab contains ab")
+                Some(m) => test.assert(m.pattern == 0)
+
+    test.case("leftmost semantics reports the first copy")
+    let c = acauto.with_kind(acauto.config(), AcLeftmostLongest)
+    match acauto.build_with(["ab", "ab"], c)
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            match acfind.find(a, "xab")
+                None    => test.fail("xab contains ab")
+                Some(m) => test.assert(m.pattern == 0)
+
+@test
+fn test_ascii_folding_reaches_both_sides() [io]
+    let c = acauto.with_ascii_case_insensitive(acauto.config(), true)
+    test.case("an upper-case pattern finds lower-case text")
+    match acauto.build_with(["HeRs"], c)
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  =>
+            match acfind.find(a, "ushers")
+                None    => test.fail("folded, ushers contains hers")
+                Some(m) => test.assert(m.start == 2 and m.end == 6)
+
+    test.case("a byte outside A to Z is matched exactly")
+    match acauto.build_with(["é"], c)
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  =>
+            test.assert(acfind.is_match(a, "café"))
+            test.assert(acfind.is_match(a, "CAFÉ") == false)
+
+    test.case("without folding the case must match")
+    match acauto.build(["HeRs"])
+        Err(_) => test.fail("one non-empty pattern builds")
+        Ok(a)  => test.assert(acfind.is_match(a, "ushers") == false)
+
+@test
+fn test_the_edges_of_a_search() [io]
+    match acauto.build(["he", "she"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            test.case("a negative offset searches from the start")
+            match acfind.find_at(a, "ushers", 0 - 3)
+                None    => test.fail("ushers contains she")
+                Some(m) => test.assert(m.start == 1)
+
+            test.case("an offset at the end is None")
+            test.assert_none(acfind.find_at(a, "ushers", 6))
+
+            test.case("an empty haystack has no match")
+            test.assert(acfind.is_match(a, "") == false)
+            test.assert(list.len(acfind.find_all(a, "")) == 0)
+            test.assert(acfind.count(a, "") == 0)
+
+            test.case("a finished cursor stays finished, at the end")
+            let s = acfind.step(acfind.cursor(a, "xx"))
+            test.assert_none(s.found)
+            test.assert(acfind.cursor_offset(s.next) == 2)
+            test.assert_none(acfind.step(s.next).found)
+
+            test.case("a match on the last byte is found")
+            test.assert(acfind.count(a, "she she") == 2)
+
+@test
+fn test_replace_first_with_nothing_to_replace() [io]
+    match acauto.build(["cat", "dog"])
+        Err(_) => test.fail("two non-empty patterns build")
+        Ok(a)  =>
+            test.case("the haystack comes back unchanged")
+            match acreplace.replace_first(a, "a bird", ["fox", "owl"])
+                Err(_) => test.fail("two replacements for two patterns fit")
+                Ok(s)  => test.assert_eq_str(s, "a bird")
+
+            test.case("a short list is refused before the search")
+            match acreplace.replace_first(a, "a cat", ["fox"])
+                Ok(_)  => test.fail("a short list must not be used")
+                Err(e) => test.assert_eq_str(acerror.code(e), "replacement-count-mismatch")
+
+@test
+fn test_a_leftmost_stream_reads_the_held_bytes_again() [io]
+    // Under leftmost-longest `ab` is held while `abcdefg` is still
+    // possible.  When `X` ends that, `ab` is final and the bytes after
+    // it, carried in the tail, are searched again from the root.
+    let c = acauto.with_kind(acauto.config(), AcLeftmostLongest)
+    match acauto.build_with(["ab", "abcdefg", "cd"], c)
+        Err(_) => test.fail("three non-empty patterns build")
+        Ok(a)  =>
+            let one = acstream.feed(acstream.stream(a), "abcd")
+            test.assert(list.len(one.matches) == 0)
+            test.assert(acstream.carried_bytes(one.state) == 4)
+            let two = acstream.feed(one.state, "eX")
+            test.assert(list.len(two.matches) == 2)
+            test.assert(two.matches[1].start == 2 and two.matches[1].end == 4)
+            test.assert(acstream.is_settled(two.state))
+            test.assert(list.len(acstream.finish(two.state).matches) == 0)

@@ -1,33 +1,25 @@
 // acfind.nv — searching one haystack the caller already holds whole.
 //
-// THREE SHAPES, AND WHO TAKES WHICH
+// `is_match` answers a question and stops at the first hit.  It is
+// the cheapest call here.  `find_all` builds the list, for a caller
+// that will read it more than once.  `cursor` and `step` walk the
+// haystack one match at a time with no list, for a caller that may
+// stop early or writes each match somewhere as it arrives.
 //
-// `is_match` answers a question and stops at the first hit, which is
-// what a filter wants and is the cheapest call here.  `find_all`
-// builds the list, which is what a caller who is about to iterate it
-// twice wants.  `cursor` and `step` walk the haystack one match at a
-// time with no list at all, which is what a caller that is going to
-// stop early wants, and what a caller rendering into a fixed buffer
-// needs.
+// All three report the same matches in the same order.  The order is
+// by start offset, and it is the order `acmatch.compare` defines.
 //
-// All three report the same matches in the same order, because all
-// three ask the same automaton.  The order is by start offset, and
-// within a start offset by end offset — `acmatch.compare`'s order, and
-// it is total, so a test may assert the whole list.
-//
-// OVERLAPPING IS A SEPARATE FUNCTION AND ANSWERS A RESULT
-//
-// `find_all` never reports two matches that share a byte: a match
-// consumes the bytes it covers and the scan resumes after them.
-// `find_overlapping` reports every occurrence of every pattern, and it
-// can only be answered by a standard automaton — see acauto's module
-// comment.  It is spelled as a `Result` rather than as a panic
-// because "I built this set leftmost-first six months ago" is a fact
-// a running program can recover from and a crash is not.
+// `find_all` never reports two matches that share a byte.  A match
+// consumes the bytes it covers, and the search resumes after them.
+// `find_overlapping` reports every occurrence of every pattern.  It is
+// defined only under standard semantics, and on a leftmost automaton
+// it answers `AcOverlappingNeedsStandard` rather than ending the
+// program.
 
 use acauto
 use acerror
 use acmatch
+use acscan
 
 // A position in a haystack that a search has reached.
 //
@@ -90,7 +82,12 @@ pub struct AcStep
 //         Ok(a)  => println("${acfind.is_match(a, "ushers")}")    // true
 // ```
 pub fn is_match(a: acauto.AcAutomaton, haystack: Str) -> Bool []
-    todo("ahocorasick-nv.acfind.is_match")
+    var state = 0
+    for i in 0..str.len(haystack)
+        state = a.transitions[state * 256 + str.byte_at_or(haystack, i, 0)]
+        if a.match_start[state] < a.match_start[state + 1]
+            return true
+    false
 
 // The first match in the haystack, or `None`.
 //
@@ -112,7 +109,7 @@ pub fn is_match(a: acauto.AcAutomaton, haystack: Str) -> Bool []
 //                 None    => println("no match")
 // ```
 pub fn find(a: acauto.AcAutomaton, haystack: Str) -> ?acmatch.AcMatch []
-    todo("ahocorasick-nv.acfind.find")
+    find_at(a, haystack, 0)
 
 // The first match at or after a byte offset, or `None`.
 //
@@ -134,7 +131,10 @@ pub fn find(a: acauto.AcAutomaton, haystack: Str) -> ?acmatch.AcMatch []
 //                 None    => println("no match")
 // ```
 pub fn find_at(a: acauto.AcAutomaton, haystack: Str, at: Int) -> ?acmatch.AcMatch []
-    todo("ahocorasick-nv.acfind.find_at")
+    if at > str.len(haystack)
+        return None
+    let r = acscan.run(a, "", haystack, 0, math.max(at, 0), 0, None, true, 1)
+    list.first(r.matches)
 
 // Every non-overlapping match, in order.
 //
@@ -153,7 +153,8 @@ pub fn find_at(a: acauto.AcAutomaton, haystack: Str, at: Int) -> ?acmatch.AcMatc
 //         Ok(a)  => println("${list.len(acfind.find_all(a, "ushers"))}")   // 1
 // ```
 pub fn find_all(a: acauto.AcAutomaton, haystack: Str) -> [acmatch.AcMatch] []
-    todo("ahocorasick-nv.acfind.find_all")
+    let r = acscan.run(a, "", haystack, 0, 0, 0, None, true, 0 - 1)
+    r.matches
 
 // How many non-overlapping matches the haystack holds.
 //
@@ -169,7 +170,16 @@ pub fn find_all(a: acauto.AcAutomaton, haystack: Str) -> [acmatch.AcMatch] []
 //         Ok(a)  => println("${acfind.count(a, "ushers")}")
 // ```
 pub fn count(a: acauto.AcAutomaton, haystack: Str) -> Int []
-    todo("ahocorasick-nv.acfind.count")
+    var n = 0
+    var at = 0
+    loop
+        match find_at(a, haystack, at)
+            None    =>
+                break
+            Some(m) =>
+                n += 1
+                at = m.end
+    n
 
 // Every occurrence of every pattern, including matches that share
 // bytes.
@@ -197,7 +207,20 @@ pub fn count(a: acauto.AcAutomaton, haystack: Str) -> Int []
 // ```
 pub fn find_overlapping(a: acauto.AcAutomaton,
                         haystack: Str) -> Result<[acmatch.AcMatch], acerror.AcError> []
-    todo("ahocorasick-nv.acfind.find_overlapping")
+    if not acauto.supports_overlapping(a)
+        return Err(AcOverlappingNeedsStandard(acauto.kind_name(a.kind)))
+    var found: [(Int, Int, Int)] = []
+    var state = 0
+    for i in 0..str.len(haystack)
+        state = a.transitions[state * 256 + str.byte_at_or(haystack, i, 0)]
+        for k in a.match_start[state]..a.match_start[state + 1]
+            let p = a.match_pattern[k]
+            list.push(found, (i + 1 - str.len(a.patterns[p]), i + 1, p))
+    list.sort(found)
+    var out: [acmatch.AcMatch] = []
+    for (start, end, p) in found
+        list.push(out, acmatch.at(p, start, end))
+    Ok(out)
 
 // A cursor at the start of a haystack.
 //
@@ -211,7 +234,7 @@ pub fn find_overlapping(a: acauto.AcAutomaton,
 //         Ok(a)  => println("${acfind.cursor_offset(acfind.cursor(a, "ushers"))}")   // 0
 // ```
 pub fn cursor(a: acauto.AcAutomaton, haystack: Str) -> AcCursor []
-    todo("ahocorasick-nv.acfind.cursor")
+    cursor_at(a, haystack, 0)
 
 // A cursor at a byte offset into a haystack.
 //
@@ -225,7 +248,7 @@ pub fn cursor(a: acauto.AcAutomaton, haystack: Str) -> AcCursor []
 //         Ok(a)  => println("${acfind.cursor_offset(acfind.cursor_at(a, "ushers", 3))}")   // 3
 // ```
 pub fn cursor_at(a: acauto.AcAutomaton, haystack: Str, at: Int) -> AcCursor []
-    todo("ahocorasick-nv.acfind.cursor_at")
+    AcCursor { automaton: a, haystack: haystack, at: at }
 
 // The byte offset a cursor will search from next.
 //
@@ -239,7 +262,7 @@ pub fn cursor_at(a: acauto.AcAutomaton, haystack: Str, at: Int) -> AcCursor []
 //         Ok(a)  => println("${acfind.cursor_offset(acfind.cursor(a, ""))}")   // 0
 // ```
 pub fn cursor_offset(c: AcCursor) -> Int []
-    todo("ahocorasick-nv.acfind.cursor_offset")
+    c.at
 
 // One non-overlapping match, and the cursor that follows it.
 //
@@ -266,4 +289,8 @@ pub fn cursor_offset(c: AcCursor) -> Int []
 //             println("${n}")
 // ```
 pub fn step(c: AcCursor) -> AcStep []
-    todo("ahocorasick-nv.acfind.step")
+    match find_at(c.automaton, c.haystack, c.at)
+        Some(m) => AcStep { next: cursor_at(c.automaton, c.haystack, m.end), found: Some(m) }
+        None    =>
+            let end = str.len(c.haystack)
+            AcStep { next: cursor_at(c.automaton, c.haystack, end), found: None }

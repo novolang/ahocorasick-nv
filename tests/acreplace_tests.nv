@@ -2,8 +2,6 @@
 // document coming out quietly wrong.  Also the last of the public
 // surface: the match value, the error's sentence, and the two lookups
 // the other suites did not reach.
-//
-// RED ON PURPOSE.
 
 use std.test
 use acauto
@@ -39,9 +37,7 @@ fn test_a_replacement_list_is_indexed_by_pattern() [io]
 
 @test
 fn test_a_short_replacement_list_is_refused_with_both_lengths() [io]
-    // The reference implementations do not check this.  The symptom
-    // of the unchecked version is a document that came out slightly
-    // wrong and nothing in any log.
+    // The reference implementations do not check this.
     test.case("one replacement for two patterns is refused")
     match acauto.build(["cat", "dog"])
         Err(_) => test.fail("two non-empty patterns build")

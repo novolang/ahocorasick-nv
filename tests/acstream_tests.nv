@@ -1,7 +1,5 @@
 // acstream_tests.nv — the same stream split differently gives the
 // same answers, and `finish` is not optional.
-//
-// RED ON PURPOSE.
 
 use std.test
 use acauto
@@ -9,8 +7,8 @@ use acstream
 
 @test
 fn test_a_match_that_straddles_a_chunk_boundary_is_still_found() [io]
-    // The whole reason the module exists: `hers` split as `ushe` and
-    // `rs` is a match neither chunk contains.
+    // `hers` split as `ushe` and `rs` is a match neither chunk
+    // contains.
     test.case("`hers` arrives across two chunks and is reported once")
     match acauto.build(["hers"])
         Err(_) => test.fail("one non-empty pattern builds")

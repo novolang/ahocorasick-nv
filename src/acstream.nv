@@ -1,39 +1,30 @@
 // acstream.nv — searching a haystack that arrives in pieces.
 //
-// THE STATE IS A VALUE, AND IT CARRIES THREE THINGS
+// A pattern may straddle a chunk boundary: `hers` split as `he` and
+// `rs` is a match that neither chunk contains.  The stream state is a
+// value that carries three things across the boundary: the automaton
+// state the last chunk ended in, the absolute offset the stream has
+// reached, and a tail of the most recent bytes.
 //
-// A stream search cannot be a fold over `acfind.find_all` applied to
-// each chunk, because a pattern may straddle a boundary: `hers` split
-// as `he` and `rs` is a match that neither chunk contains.  So the
-// state carries the automaton node the last chunk ended in, the
-// absolute byte offset the stream has reached, and a tail of the
-// bytes a match still under way may need.
+// The tail is the longest suffix of the stream that a later byte can
+// still extend into a match.  It is never longer than `max_carry`, one
+// byte less than the longest pattern, so the memory a stream holds does
+// not grow with the length of the stream.
 //
-// The tail is bounded by `max_carry`, one byte less than the longest
-// pattern, so a caller can size a deployment: the memory a stream
-// holds does not grow with the length of the stream.
-//
-// EVERY OFFSET IS ABSOLUTE
-//
-// The matches `feed` reports carry offsets into the WHOLE stream, not
-// into the chunk that completed them.  A caller that had to add a
-// running total back would get it wrong exactly once, at the match
-// that straddles, which is the case the whole module exists for.
-//
-// A REPORT IS FINAL, AND `finish` IS NOT OPTIONAL
+// The matches `feed` reports carry offsets into the whole stream, not
+// into the chunk that completed them.
 //
 // Under standard semantics a match is final the moment it is seen.
 // Under either leftmost semantics it is not: `Sam` at offset 4 may
 // still lose to `Samwise`, and whether it does depends on bytes that
-// have not arrived.  So `feed` reports only what no later byte can
-// change, `is_settled` says whether anything is being held back, and
-// `finish` releases the last candidate at the end of the stream.  A
-// caller that forgets `finish` loses the last match of the stream,
-// silently — which is why `is_settled` is published rather than left
-// as an implementation detail.
+// have not arrived.  `feed` reports only what no later byte can
+// change, `is_settled` says whether a candidate is being held back,
+// and `finish` releases it at the end of the stream.  A caller that
+// does not call `finish` loses the last match of the stream.
 
 use acauto
 use acmatch
+use acscan
 
 // A stream search in progress.
 //
@@ -54,8 +45,9 @@ pub struct AcStreamState
     // How many bytes of the stream have been consumed.  The next byte
     // to arrive is at this offset.
     consumed: Int
-    // The bytes of the stream a match still under way may need, at
-    // most `max_carry` of them.
+    // The most recent bytes of the stream that a later byte can still
+    // extend into a match, at most `max_carry` of them.  A held
+    // candidate never starts before them.
     tail: Str
     // A leftmost candidate that a later byte could still beat, or
     // `None`.  Always `None` under standard semantics.
@@ -93,7 +85,7 @@ pub struct AcFeed
 //         Ok(a)  => println("${acstream.carried_bytes(acstream.stream(a))}")   // 0
 // ```
 pub fn stream(a: acauto.AcAutomaton) -> AcStreamState []
-    todo("ahocorasick-nv.acstream.stream")
+    AcStreamState { automaton: a, node: 0, consumed: 0, tail: "", pending: None }
 
 // Consume one chunk, and report the matches it made final.
 //
@@ -115,7 +107,7 @@ pub fn stream(a: acauto.AcAutomaton) -> AcStreamState []
 //             println("${list.len(two.matches)}")     // 1
 // ```
 pub fn feed(s: AcStreamState, chunk: Str) -> AcFeed []
-    todo("ahocorasick-nv.acstream.feed")
+    advance(s, chunk, false)
 
 // End the stream, and report whatever was being held back.
 //
@@ -137,7 +129,7 @@ pub fn feed(s: AcStreamState, chunk: Str) -> AcFeed []
 //             println("${list.len(acstream.finish(f.state).matches)}")   // 1
 // ```
 pub fn finish(s: AcStreamState) -> AcFeed []
-    todo("ahocorasick-nv.acstream.finish")
+    advance(s, "", true)
 
 // How many bytes of the stream have been consumed.
 //
@@ -156,7 +148,7 @@ pub fn finish(s: AcStreamState) -> AcFeed []
 //             println("${acstream.stream_offset(f.state)}")    // 6
 // ```
 pub fn stream_offset(s: AcStreamState) -> Int []
-    todo("ahocorasick-nv.acstream.stream_offset")
+    s.consumed
 
 // How many bytes the state is holding on to.
 //
@@ -174,7 +166,7 @@ pub fn stream_offset(s: AcStreamState) -> Int []
 //             println("${acstream.carried_bytes(f.state)}")
 // ```
 pub fn carried_bytes(s: AcStreamState) -> Int []
-    todo("ahocorasick-nv.acstream.carried_bytes")
+    str.len(s.tail)
 
 // The most bytes a stream over this automaton will ever carry: one
 // less than the longest pattern.
@@ -192,7 +184,7 @@ pub fn carried_bytes(s: AcStreamState) -> Int []
 //         Ok(a)  => println("${acstream.max_carry(a)}")    // 3
 // ```
 pub fn max_carry(a: acauto.AcAutomaton) -> Int []
-    todo("ahocorasick-nv.acstream.max_carry")
+    acauto.max_pattern_len(a) - 1
 
 // Whether `finish` would report nothing.
 //
@@ -209,4 +201,25 @@ pub fn max_carry(a: acauto.AcAutomaton) -> Int []
 //         Ok(a)  => println("${acstream.is_settled(acstream.stream(a))}")   // true
 // ```
 pub fn is_settled(s: AcStreamState) -> Bool []
-    todo("ahocorasick-nv.acstream.is_settled")
+    match s.pending
+        None    => true
+        Some(_) => false
+
+// Scan one chunk after the carried tail, and carry forward the bytes
+// the automaton's state stands for.  With `at_end` the chunk is the
+// last, and a held candidate is final.
+fn advance(s: AcStreamState, chunk: Str, at_end: Bool) -> AcFeed
+    let lt = str.len(s.tail)
+    let base = s.consumed - lt
+    let r = acscan.run(s.automaton, s.tail, chunk, base, lt, s.node, s.pending, at_end, 0 - 1)
+    let end = s.consumed + str.len(chunk)
+    let keep = s.automaton.depth[r.node]
+    let lc = str.len(chunk)
+    var tail = chunk
+    if keep > lc
+        tail = str.slice(s.tail, lt - (keep - lc), lt) + chunk
+    else
+        tail = str.slice(chunk, lc - keep, lc)
+    let next = AcStreamState { automaton: s.automaton, node: r.node, consumed: end, tail: tail,
+                               pending: r.pending }
+    AcFeed { state: next, matches: r.matches }
