@@ -134,7 +134,9 @@ pub fn find_at(a: acauto.AcAutomaton, haystack: Str, at: Int) -> ?acmatch.AcMatc
     if at > str.len(haystack)
         return None
     let r = acscan.run(a, "", haystack, 0, math.max(at, 0), 0, None, true, 1)
-    list.first(r.matches)
+    if list.is_empty(r.matches)
+        return None
+    Some(r.matches[0])
 
 // Every non-overlapping match, in order.
 //

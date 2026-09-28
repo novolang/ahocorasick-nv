@@ -441,6 +441,14 @@ fn first_fault(patterns: [Str]) -> ?acerror.AcError
             return Some(AcEmptyPattern(i))
     None
 
+// A list of `n` zeros.  Written out because `list.zeros` is not
+// available on the wasm target, and every other step of a build is.
+fn zeros(n: Int) -> [Int]
+    var out: [Int] = []
+    for _ in 0..n
+        list.push(out, 0)
+    out
+
 // The trie of the patterns, before the failure links are computed.
 struct Trie
     // The children, 256 entries per state; 0 means no child, because
@@ -454,12 +462,12 @@ struct Trie
 
 // A trie holding the root alone.
 fn trie_root() -> Trie
-    Trie { next: list.zeros(256), depth: [0], inner: [false], own: [[]] }
+    Trie { next: zeros(256), depth: [0], inner: [false], own: [[]] }
 
 // Add a state below `parent` on byte `b`, and answer it.
 fn trie_add(var t: Trie, parent: Int, b: Int) -> Int
     let s = list.len(t.depth)
-    list.append(t.next, list.zeros(256))
+    list.append(t.next, zeros(256))
     list.push(t.depth, t.depth[parent] + 1)
     list.push(t.inner, false)
     list.push(t.own, [])
@@ -496,8 +504,8 @@ fn construct(patterns: [Str], c: AcConfig) -> AcAutomaton
         trie_insert(t, patterns[i], i, c)
     let n = list.len(t.depth)
     var delta = t.next
-    var fail = list.zeros(n)
-    var live = list.zeros(n)
+    var fail = zeros(n)
+    var live = zeros(n)
     var outs: [[Int]] = []
     for _ in 0..n
         list.push(outs, [])

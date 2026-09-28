@@ -166,11 +166,11 @@ the whole text is already in memory.
 
 ## Running on a microcontroller
 
-This package makes no device claim and ships no device probe. Every
-function in it performs no input or output, so the modules build for a
-microcontroller, but the automaton's transition table is 256 entries
-per state and the size of a useful pattern set has not been measured
-on a device. `acauto.memory_bytes` is the number to measure with.
+This package does not build for a microcontroller. Building an
+automaton grows lists, which the embedded runtime does not provide,
+and the transition table is 256 entries per state. The package builds
+for a host and for WebAssembly. `acauto.memory_bytes` gives the size
+of the tables for a pattern set.
 
 ## What is not included
 
