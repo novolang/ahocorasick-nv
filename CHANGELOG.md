@@ -5,6 +5,40 @@ All notable changes to ahocorasick-nv are recorded here. The format is
 package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 with the pre-1.0 rule that a breaking change bumps the MINOR number.
 
+## [0.1.0] — 2026-09-28
+
+The first implementation of the interface published as 0.0.1.
+
+### Added
+
+- `acauto` builds a trie of the patterns and folds the failure links
+  into a dense transition table, 256 entries per state, so a search
+  reads one table entry per byte.  ASCII case folding copies the rows
+  for `a` to `z` onto `A` to `Z`, and the search does not fold.
+- Under leftmost-first, a pattern that has an earlier pattern as a
+  prefix is left out of the output sets, and under either leftmost
+  semantics so is a repeated pattern.  Neither can ever be reported.
+- A leftmost search holds its candidate until the longest suffix that
+  can still grow into a match starts after the candidate's start, then
+  starts again at the candidate's end.  `acfind` and `acstream` share
+  this loop, so a stream reports the same matches as a search over the
+  whole text, however it is split.
+- `tests/differential_tests.nv` checks 240 cases against version 1.1.3
+  of the Rust `aho-corasick` crate, and is written by
+  `tools/differential.py` with the crate as its oracle.
+- `tests/acedge_tests.nv` covers the refusals, the edges of each
+  search and ASCII folding.  `tests/coverage.sh` measures line
+  coverage over `src/` across the suites.
+
+### Changed
+
+These break code written against 0.0.x.
+
+- `AcAutomaton` has two more fields: `depth`, the length of the prefix
+  each state stands for, and `live`, the longest suffix of each state
+  that a later byte can extend.  A leftmost search reads both to decide
+  when a candidate is final.
+
 ## [0.0.1] — 2026-09-17
 
 **The interface, published before anyone implements it.** Every public

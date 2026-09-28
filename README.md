@@ -12,12 +12,6 @@ implementations are the Rust crate
 [`aho-corasick`](https://docs.rs/aho-corasick) and the Python
 extension [`pyahocorasick`](https://pyahocorasick.readthedocs.io/).
 
-**Status: NOT IMPLEMENTED — interface only.** Every function is
-declared with its full signature, but every body is a `todo()` that
-panics when called. The package is published so its design can be
-reviewed and depended on before it is implemented. Version 0.1.0 will
-be the first working release.
-
 ## What Aho–Corasick is
 
 The **patterns** are the strings being looked for. The **haystack** is
@@ -38,8 +32,8 @@ questions about the same text.
 | Semantics | What is reported |
 | --- | --- |
 | standard | every occurrence of every pattern |
-| leftmost-first | at each position, the pattern earliest in the pattern list |
-| leftmost-longest | at each position, the longest pattern, whatever the order |
+| leftmost-first | at the leftmost start, the pattern earliest in the pattern list |
+| leftmost-longest | at the leftmost start, the longest pattern, whatever the order |
 
 The classic illustration is the patterns `he`, `she`, `his` and `hers`
 over the text `ushers`. Standard semantics reports `she` at byte 1,
@@ -83,10 +77,7 @@ fn main() [io]
                         println("${acmatch.matched_text("ushers", m)} at ${m.start}")
 ```
 
-Build and test with `novo pkg build` and `novo test`. Today `novo test`
-fails on purpose: every test reaches a
-`not implemented: ahocorasick-nv.<module>.<fn>` panic. The tests are
-the specification the implementation will have to satisfy.
+The program prints `she at 1`, `he at 2` and `hers at 2`.
 
 ## What the package contains
 
@@ -135,8 +126,11 @@ the whole text is already in memory.
    `he`, `she`, `his` and `hers`, the text `ushers` reports one
    non-overlapping match, not three.
 4. **The pattern order matters under leftmost-first.** `Sam` before
-   `Samwise` reports `Sam`; the other order reports `Samwise`. Under
-   leftmost-longest the order does not matter.
+   `Samwise` reports `Sam`; the other order reports `Samwise`. A
+   pattern that begins with an earlier pattern is never reported under
+   leftmost-first, and a repeated pattern is reported under its first
+   index under either leftmost semantics. Under leftmost-longest the
+   order does not matter.
 5. **An empty pattern is refused.** It would match at every byte
    offset, including the end of the haystack.
 6. **An empty pattern list is refused.** An automaton that never
@@ -164,6 +158,11 @@ the whole text is already in memory.
     is refused with both lengths named.
 13. **`acreplace.split` answers one more piece than there are
     matches**, counting the empty pieces at the ends.
+14. **A leftmost search may read some bytes twice.** After a match it
+    starts again at the match's end, and it may already have read past
+    that end while a longer candidate was still possible. The work is
+    then bounded by the length of the text times the length of the
+    longest pattern, not by the length of the text alone.
 
 ## Running on a microcontroller
 
@@ -210,10 +209,13 @@ on a device. `acauto.memory_bytes` is the number to measure with.
 ## Tests
 
 ```bash
-novo test tests/acauto_tests.nv      # the three semantics, and what the build refuses
-novo test tests/acfind_tests.nv      # the 1975 paper's example, overlapping and not
-novo test tests/acstream_tests.nv    # a match across a chunk boundary, and finish
-novo test tests/acreplace_tests.nv   # rewriting, the length check, and the match value
+novo test tests/acauto_tests.nv         # the three semantics, and what the build refuses
+novo test tests/acfind_tests.nv         # the 1975 paper's example, overlapping and not
+novo test tests/acstream_tests.nv       # a match across a chunk boundary, and finish
+novo test tests/acreplace_tests.nv      # rewriting, the length check, and the match value
+novo test tests/acedge_tests.nv         # the refusals, the edges of a search, folding
+novo test tests/differential_tests.nv   # 240 cases against the aho-corasick crate
+bash tests/coverage.sh                  # line coverage over src/, merged across the suites
 ```
 
 The normative source is Aho and Corasick's 1975 paper for the
@@ -232,31 +234,14 @@ a leftmost stream holds its last candidate until `finish`, and that a
 replacement list of the wrong length is refused with both lengths
 named.
 
-The tests compile today and fail at run, each on the
-`not implemented: ahocorasick-nv.<module>.<fn>` panic that is its
-body. That is the expected state of an interface release. They turn
-green one at a time as bodies land.
-
-## Implementation status
-
-| Item | Implemented |
-| --- | --- |
-| `acerror.AcError` and the other public types | the types are declared |
-| `acerror.message`, `.code`, `.is_pattern_fault` | no |
-| `acmatch.at`, `.len`, `.matched_text`, `.overlaps`, `.compare` | no |
-| `acauto.config`, `.with_kind`, `.with_ascii_case_insensitive` | no |
-| `acauto.build`, `.build_with` | no |
-| `acauto.kind_of`, `.kind_name`, `.kind_named` | no |
-| `acauto.pattern_count`, `.pattern_at`, `.min_pattern_len`, `.max_pattern_len` | no |
-| `acauto.is_ascii_case_insensitive`, `.supports_overlapping`, `.case_fold_notes` | no |
-| `acauto.state_count`, `.memory_bytes` | no |
-| `acfind.is_match`, `.find`, `.find_at`, `.find_all`, `.count` | no |
-| `acfind.find_overlapping` | no |
-| `acfind.cursor`, `.cursor_at`, `.cursor_offset`, `.step` | no |
-| `acstream.stream`, `.feed`, `.finish` | no |
-| `acstream.stream_offset`, `.carried_bytes`, `.max_carry`, `.is_settled` | no |
-| `acreplace.replace_all`, `.replace_first`, `.replace_all_with` | no |
-| `acreplace.split`, `.replacements_fit` | no |
+The differential suite is written by `tools/differential.py`. It makes
+40 pattern sets and haystacks from a fixed seed and asks version 1.1.3
+of the Rust `aho-corasick` crate for the answers under all three
+semantics, with and without ASCII case folding. Every one of the 240
+cases must give the crate's non-overlapping matches, and under standard
+semantics its overlapping matches. Each case is also fed to `acstream`
+in chunks of one, two and three bytes, which must report the
+non-overlapping matches unchanged.
 
 ## Licence
 

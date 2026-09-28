@@ -1,15 +1,13 @@
 [package]
 name        = "ahocorasick-nv"
-version     = "0.0.1"
+version     = "0.1.0"
 description = "Multi-pattern search with an Aho-Corasick automaton built once as a value: standard, leftmost-first and leftmost-longest semantics chosen at construction, overlapping and non-overlapping iteration, streaming over chunks with a bounded carried state, optional ASCII case folding, and replace-all over a replacement list whose length is checked."
 license     = "Apache-2.0"
 
-# An INTERFACE release: every `pub fn` body is a `todo()`, so the
-# signatures and the effect rows are published and nothing is
-# implemented.  `novo pkg publish` recognises the shape and requires
-# both the draft stability and the 0.0.x version; the first
-# implementation is the 0.1.0 published over it.
-stability   = "draft"
+# `experimental` because no program outside this repository has used the
+# package yet, and the tests were written against the signatures rather
+# than by a consumer.
+stability   = "experimental"
 
 # `core`.  Every row is `[]`: the automaton is built from a list of
 # strings the caller holds and searched over a string the caller
@@ -25,7 +23,8 @@ category    = "text"
 tags        = ["aho-corasick", "multi-pattern", "search", "automaton", "string-matching", "streaming", "text"]
 repository  = "https://github.com/novolang/ahocorasick-nv"
 maintainers = ["novo-lang"]
-novo        = ">= 0.9.0"
+# 0.15.0 is the toolchain this release was built and tested with.
+novo        = ">= 0.15.0"
 
 # A library: no `main`, so `novo pkg build` type-checks and
 # effect-checks every module under `src/` and writes no binary.
