@@ -1,0 +1,11 @@
+# The reference answers for tests/differential_tests.nv: the Rust
+# `aho-corasick` crate, run over the cases tools/differential.py writes
+# to its standard input.  It builds offline from the local crate cache.
+[package]
+name = "ac-oracle"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+aho-corasick = "=1.1.3"

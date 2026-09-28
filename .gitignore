@@ -40,6 +40,10 @@ ahocorasick-nv
 # `novo pkg publish` does not count it against the clean-tree
 # check.
 
+# The differential oracle's Cargo build directory.  tools/ is not on
+# the publish allow-list, so none of it ships.
+tools/oracle/target/
+
 # Editor state.  Not a build artefact and not exempt from the
 # clean-tree check — a stray one is still yours.
 .vscode/settings.json.user
