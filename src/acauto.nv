@@ -490,7 +490,7 @@ fn trie_insert(var t: Trie, pattern: Str, index: Int, c: AcConfig)
             b = fold(b)
         var child = t.next[s * 256 + b]
         if child == 0
-            child = trie_add(t, s, b)
+            child = trie_add(var t, s, b)
         s = child
     if not is_standard(c.kind) and list.len(t.own[s]) > 0
         return
@@ -501,7 +501,7 @@ fn trie_insert(var t: Trie, pattern: Str, index: Int, c: AcConfig)
 fn construct(patterns: [Str], c: AcConfig) -> AcAutomaton
     var t = trie_root()
     for i in 0..list.len(patterns)
-        trie_insert(t, patterns[i], i, c)
+        trie_insert(var t, patterns[i], i, c)
     let n = list.len(t.depth)
     var delta = t.next
     var fail = zeros(n)

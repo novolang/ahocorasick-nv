@@ -1,6 +1,6 @@
 [package]
 name        = "ahocorasick-nv"
-version     = "0.1.0"
+version     = "0.1.1"
 description = "Multi-pattern search with an Aho-Corasick automaton built once as a value: standard, leftmost-first and leftmost-longest semantics chosen at construction, overlapping and non-overlapping iteration, streaming over chunks with a bounded carried state, optional ASCII case folding, and replace-all over a replacement list whose length is checked."
 license     = "Apache-2.0"
 
@@ -24,7 +24,7 @@ tags        = ["aho-corasick", "multi-pattern", "search", "automaton", "string-m
 repository  = "https://github.com/novolang/ahocorasick-nv"
 maintainers = ["novo-lang"]
 # 0.15.0 is the toolchain this release was built and tested with.
-novo        = ">= 0.15.0"
+novo        = ">= 0.21.1"
 
 # A library: no `main`, so `novo pkg build` type-checks and
 # effect-checks every module under `src/` and writes no binary.
